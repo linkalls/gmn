@@ -1,0 +1,22 @@
+# Binaries
+gmn
+ge-mini
+geminimini
+*.exe
+build/
+
+# Generated images
+gemini_image_*.png
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+coverage.out
