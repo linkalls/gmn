@@ -1,7 +1,7 @@
 //go:build !darwin
 
 // Keychain stub for non-macOS platforms
-// Copyright 2025 Takuto Wada
+// Copyright 2025 Tomohiro Owada
 // SPDX-License-Identifier: Apache-2.0
 package auth
 
