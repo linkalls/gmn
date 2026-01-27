@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/tomohiro-owada/gmn/internal/api"
+	"github.com/linkalls/gmn/internal/api"
 )
 
 // Formatter is the interface for output formatters
