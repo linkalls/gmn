@@ -64,12 +64,14 @@ type Part struct {
 
 // FunctionCall represents a tool call
 type FunctionCall struct {
+	ID   string                 `json:"id,omitempty"`
 	Name string                 `json:"name"`
 	Args map[string]interface{} `json:"args"`
 }
 
 // FunctionResp represents a tool response
 type FunctionResp struct {
+	ID       string                 `json:"id,omitempty"`
 	Name     string                 `json:"name"`
 	Response map[string]interface{} `json:"response"`
 }

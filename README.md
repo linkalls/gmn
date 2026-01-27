@@ -51,17 +51,15 @@ gemini  # Choose "Login with Google"
 
 gmn reuses these credentials automatically from `~/.gemini/`. Your free tier quota or Workspace Code Assist quota applies.
 
-### Homebrew
-```bash
-brew install tomohiro-owada/tap/gmn
-```
 
 ### Go
+
 ```bash
 go install github.com/linkalls/gmn@latest
 ```
 
 ### Binary
+
 Download from [Releases](https://github.com/linkalls/gmn/releases)
 
 ## 🚀 Quick Start
@@ -80,7 +78,7 @@ cat error.log | gmn "What's wrong?"
 gmn "List 3 colors" -o json
 
 # Use different model
-gmn "Write a poem" -m gemini-2.5-pro
+gmn "Write a poem" -m gemini-3-pro-preview
 ```
 
 ## 📋 Usage
@@ -91,7 +89,7 @@ gmn mcp <command>
 
 Flags:
   -p, --prompt string          Prompt (alternative to positional arg)
-  -m, --model string           Model (default "gemini-2.5-flash")
+  -m, --model string           Model (default "gemini-2.5-flash", standard-tier: "gemini-3-pro-preview")
   -f, --file strings           Files to include
   -o, --output-format string   text, json, stream-json (default "text")
   -t, --timeout duration       Timeout (default 5m)
@@ -129,11 +127,11 @@ gmn mcp call my-server tool-name arg=value
 
 ## 📊 Benchmarks
 
-| Metric | gmn | Official CLI | Improvement |
-|--------|-----|--------------|-------------|
-| Startup | **23ms** | 847ms | **37x** |
-| Binary | 5.6MB | ~200MB | **35x** |
-| Runtime | None | Node.js | - |
+| Metric  | gmn      | Official CLI | Improvement |
+| ------- | -------- | ------------ | ----------- |
+| Startup | **23ms** | 847ms        | **37x**     |
+| Binary  | 5.6MB    | ~200MB       | **35x**     |
+| Runtime | None     | Node.js      | -           |
 
 ## 🏗️ Build
 
