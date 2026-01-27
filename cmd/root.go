@@ -90,39 +90,6 @@ func run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Load config
-	cfg, err := config.Load()
-	if err != nil {
-		formatter.WriteError(fmt.Errorf("failed to load config: %w", err))
-		return err
-	}
-	_ = cfg // Will be used for MCP
-
-	// Load credentials
-	authMgr, err := auth.NewManager()
-	if err != nil {
-		formatter.WriteError(fmt.Errorf("failed to initialize auth: %w", err))
-		return err
-	}
-
-	creds, err := authMgr.LoadCredentials()
-	if err != nil {
-		formatter.WriteError(err)
-		return err
-	}
-
-	// Refresh if expired
-	if creds.IsExpired() {
-		if debug {
-			fmt.Fprintln(os.Stderr, "Token expired, refreshing...")
-		}
-		creds, err = authMgr.RefreshToken(creds)
-		if err != nil {
-			formatter.WriteError(err)
-			return err
-		}
-	}
-
 	// Prepare input
 	inputText, err := input.PrepareInput(prompt, files)
 	if err != nil {
@@ -136,44 +103,10 @@ func run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Create API client
-	httpClient := authMgr.HTTPClient(creds)
-	apiClient := api.NewClient(httpClient)
-
-	// Try to load cached project ID first
-	cachedState, _ := config.LoadCachedState()
-	projectID := cachedState.ProjectID
-
-	// If no cached project ID, fetch from API
-	if projectID == "" {
-		if debug {
-			fmt.Fprintln(os.Stderr, "Loading Code Assist status...")
-		}
-		loadResp, err := apiClient.LoadCodeAssist(ctx)
-		if err != nil {
-			formatter.WriteError(fmt.Errorf("failed to load Code Assist: %w", err))
-			return err
-		}
-		projectID = loadResp.CloudAICompanionProject
-
-		// Cache the project ID for next time
-		userTier := ""
-		if loadResp.CurrentTier != nil {
-			userTier = loadResp.CurrentTier.ID
-		}
-		_ = config.SaveCachedState(&config.CachedState{
-			ProjectID: projectID,
-			UserTier:  userTier,
-		})
-
-		if debug {
-			fmt.Fprintf(os.Stderr, "Project ID: %s (cached)\n", projectID)
-			if loadResp.CurrentTier != nil {
-				fmt.Fprintf(os.Stderr, "Tier: %s\n", loadResp.CurrentTier.ID)
-			}
-		}
-	} else if debug {
-		fmt.Fprintf(os.Stderr, "Using cached Project ID: %s\n", projectID)
+	apiClient, projectID, err := setupClient(ctx)
+	if err != nil {
+		formatter.WriteError(err)
+		return err
 	}
 
 	// Generate a simple user prompt ID
@@ -233,4 +166,76 @@ func runStreaming(ctx context.Context, client *api.Client, req *api.GenerateRequ
 	}
 
 	return nil
+}
+
+func setupClient(ctx context.Context) (*api.Client, string, error) {
+	// Load config
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to load config: %w", err)
+	}
+	_ = cfg // Will be used for MCP
+
+	// Load credentials
+	authMgr, err := auth.NewManager()
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to initialize auth: %w", err)
+	}
+
+	creds, err := authMgr.LoadCredentials()
+	if err != nil {
+		return nil, "", err
+	}
+
+	// Refresh if expired
+	if creds.IsExpired() {
+		if debug {
+			fmt.Fprintln(os.Stderr, "Token expired, refreshing...")
+		}
+		creds, err = authMgr.RefreshToken(creds)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+
+	// Create API client
+	httpClient := authMgr.HTTPClient(creds)
+	apiClient := api.NewClient(httpClient)
+
+	// Try to load cached project ID first
+	cachedState, _ := config.LoadCachedState()
+	projectID := cachedState.ProjectID
+
+	// If no cached project ID, fetch from API
+	if projectID == "" {
+		if debug {
+			fmt.Fprintln(os.Stderr, "Loading Code Assist status...")
+		}
+		loadResp, err := apiClient.LoadCodeAssist(ctx)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to load Code Assist: %w", err)
+		}
+		projectID = loadResp.CloudAICompanionProject
+
+		// Cache the project ID for next time
+		userTier := ""
+		if loadResp.CurrentTier != nil {
+			userTier = loadResp.CurrentTier.ID
+		}
+		_ = config.SaveCachedState(&config.CachedState{
+			ProjectID: projectID,
+			UserTier:  userTier,
+		})
+
+		if debug {
+			fmt.Fprintf(os.Stderr, "Project ID: %s (cached)\n", projectID)
+			if loadResp.CurrentTier != nil {
+				fmt.Fprintf(os.Stderr, "Tier: %s\n", loadResp.CurrentTier.ID)
+			}
+		}
+	} else if debug {
+		fmt.Fprintf(os.Stderr, "Using cached Project ID: %s\n", projectID)
+	}
+
+	return apiClient, projectID, nil
 }
