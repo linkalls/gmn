@@ -1,4 +1,4 @@
-module github.com/tomohiro-owada/gmn
+module github.com/linkalls/gmn
 
 go 1.22.0
 

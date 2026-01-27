@@ -58,11 +58,11 @@ brew install tomohiro-owada/tap/gmn
 
 ### Go
 ```bash
-go install github.com/tomohiro-owada/gmn@latest
+go install github.com/linkalls/gmn@latest
 ```
 
 ### Binary
-Download from [Releases](https://github.com/tomohiro-owada/gmn/releases)
+Download from [Releases](https://github.com/linkalls/gmn/releases)
 
 ## 🚀 Quick Start
 
@@ -138,7 +138,7 @@ gmn mcp call my-server tool-name arg=value
 ## 🏗️ Build
 
 ```bash
-git clone https://github.com/tomohiro-owada/gmn.git
+git clone https://github.com/linkalls/gmn.git
 cd gmn
 make build          # Current platform
 make cross-compile  # All platforms

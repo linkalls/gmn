@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/tomohiro-owada/gmn/internal/api"
-	"github.com/tomohiro-owada/gmn/internal/auth"
-	"github.com/tomohiro-owada/gmn/internal/config"
-	"github.com/tomohiro-owada/gmn/internal/input"
-	"github.com/tomohiro-owada/gmn/internal/output"
+	"github.com/linkalls/gmn/internal/api"
+	"github.com/linkalls/gmn/internal/auth"
+	"github.com/linkalls/gmn/internal/config"
+	"github.com/linkalls/gmn/internal/input"
+	"github.com/linkalls/gmn/internal/output"
 )
 
 var (

@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/tomohiro-owada/gmn/internal/config"
-	"github.com/tomohiro-owada/gmn/internal/mcp"
+	"github.com/linkalls/gmn/internal/config"
+	"github.com/linkalls/gmn/internal/mcp"
 )
 
 var mcpCmd = &cobra.Command{
