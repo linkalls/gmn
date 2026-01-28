@@ -136,7 +136,10 @@ func (m *Manager) RefreshToken(creds *Credentials) (*Credentials, error) {
 	}, nil
 }
 
-// HTTPClient returns an HTTP client with the access token
+// Version is set at build time
+var Version = "dev"
+
+// HTTPClient returns an HTTP client with the access token and proper headers
 func (m *Manager) HTTPClient(creds *Credentials) *http.Client {
 	return &http.Client{
 		Transport: &authTransport{
@@ -146,7 +149,7 @@ func (m *Manager) HTTPClient(creds *Credentials) *http.Client {
 	}
 }
 
-// authTransport adds Authorization header to requests
+// authTransport adds Authorization and User-Agent headers to requests
 type authTransport struct {
 	token string
 	base  http.RoundTripper
@@ -154,5 +157,7 @@ type authTransport struct {
 
 func (t *authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	req.Header.Set("Authorization", "Bearer "+t.token)
+	// Set User-Agent to match official Gemini CLI format for proper quota handling
+	req.Header.Set("User-Agent", fmt.Sprintf("GeminiCLI/%s/gmn (compatible)", Version))
 	return t.base.RoundTrip(req)
 }

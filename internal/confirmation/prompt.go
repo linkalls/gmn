@@ -4,6 +4,7 @@
 package confirmation
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -13,16 +14,8 @@ import (
 	"github.com/sergi/go-diff/diffmatchpatch"
 )
 
-// Theme represents the TUI theme style
-type Theme string
-
-const (
-	ThemeMinimal  Theme = "minimal"  // Simple, clean design
-	ThemeOpenCode Theme = "opencode" // OpenCode-inspired modern design
-)
-
-// CurrentTheme is the active theme (can be set globally)
-var CurrentTheme Theme = ThemeOpenCode
+// YoloMode skips all confirmation prompts when true
+var YoloMode bool = false
 
 // Outcome represents the result of a confirmation prompt
 type Outcome string
@@ -37,9 +30,11 @@ const (
 type ConfirmationType string
 
 const (
-	TypeEdit ConfirmationType = "edit" // File edit confirmation with diff
-	TypeExec ConfirmationType = "exec" // Command execution confirmation
-	TypeMCP  ConfirmationType = "mcp"  // MCP tool confirmation
+	TypeEdit  ConfirmationType = "edit"  // File edit confirmation with diff
+	TypeExec  ConfirmationType = "exec"  // Command execution confirmation
+	TypeMCP   ConfirmationType = "mcp"   // MCP tool confirmation
+	TypeShell ConfirmationType = "shell" // Shell command confirmation
+	TypeFetch ConfirmationType = "fetch" // Web fetch confirmation
 )
 
 // Details contains information for the confirmation prompt
@@ -51,6 +46,7 @@ type Details struct {
 	OriginalContent string
 	NewContent      string
 	Command         string
+	URL             string
 	Args            map[string]interface{}
 }
 
@@ -161,35 +157,6 @@ var (
 )
 
 // =============================================================================
-// Minimal Theme Styles (Simple, clean design)
-// =============================================================================
-
-var (
-	titleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("205")).
-			MarginBottom(1)
-
-	infoStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240"))
-
-	addedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("42"))
-
-	removedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("196"))
-
-	helpStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("241")).
-			MarginTop(1)
-
-	boxStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("240")).
-			Padding(0, 1)
-)
-
-// =============================================================================
 // Model
 // =============================================================================
 
@@ -203,6 +170,7 @@ type model struct {
 	width       int
 	height      int
 	selectedBtn int // 0: Yes, 1: No, 2: Always
+	hasDiff     bool
 }
 
 func initialModel(details Details) model {
@@ -210,15 +178,13 @@ func initialModel(details Details) model {
 		details:     details,
 		outcome:     OutcomeCancel,
 		selectedBtn: 0,
+		hasDiff:     false,
 	}
 
 	// Generate diff for edit confirmations
-	if details.Type == TypeEdit {
-		if CurrentTheme == ThemeOpenCode {
-			m.diff = generateDiffOpenCode(details.OriginalContent, details.NewContent)
-		} else {
-			m.diff = generateDiff(details.OriginalContent, details.NewContent)
-		}
+	if details.Type == TypeEdit && details.OriginalContent != "" && details.NewContent != "" {
+		m.diff = generateDiffOpenCode(details.OriginalContent, details.NewContent)
+		m.hasDiff = true
 	}
 
 	return m
@@ -232,7 +198,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "y", "Y", "enter":
+		case "y", "Y":
+			m.outcome = OutcomeProceedOnce
+			return m, tea.Quit
+		case "enter":
 			if m.selectedBtn == 0 {
 				m.outcome = OutcomeProceedOnce
 			} else if m.selectedBtn == 1 {
@@ -255,11 +224,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "shift+tab", "left", "h":
 			m.selectedBtn = (m.selectedBtn + 2) % 3
 		case "j", "down":
-			if m.ready {
+			if m.ready && m.hasDiff {
 				m.viewport, _ = m.viewport.Update(msg)
 			}
 		case "k", "up":
-			if m.ready {
+			if m.ready && m.hasDiff {
 				m.viewport, _ = m.viewport.Update(msg)
 			}
 		case "ctrl+c":
@@ -271,16 +240,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-		headerHeight := 8
-		footerHeight := 4
+		if m.hasDiff {
+			headerHeight := 10
+			footerHeight := 4
 
-		if !m.ready {
-			m.viewport = viewport.New(msg.Width-6, msg.Height-headerHeight-footerHeight)
-			m.viewport.SetContent(m.diff)
-			m.ready = true
+			if !m.ready {
+				m.viewport = viewport.New(msg.Width-6, msg.Height-headerHeight-footerHeight)
+				m.viewport.SetContent(m.diff)
+				m.ready = true
+			} else {
+				m.viewport.Width = msg.Width - 6
+				m.viewport.Height = msg.Height - headerHeight - footerHeight
+			}
 		} else {
-			m.viewport.Width = msg.Width - 6
-			m.viewport.Height = msg.Height - headerHeight - footerHeight
+			m.ready = true
 		}
 	}
 
@@ -288,34 +261,45 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	if CurrentTheme == ThemeOpenCode {
-		return m.viewOpenCode()
-	}
-	return m.viewMinimal()
+	return m.viewOpenCode()
 }
 
 // viewOpenCode renders the OpenCode-style TUI
 func (m model) viewOpenCode() string {
 	var b strings.Builder
 
-	// Header with icon
-	icon := "🔐"
-	if m.details.Type == TypeEdit {
+	// Determine icon and color based on type
+	var icon string
+	var headerColor lipgloss.Color
+	switch m.details.Type {
+	case TypeEdit:
 		icon = "📝"
-	} else if m.details.Type == TypeExec {
+		headerColor = accentColor
+	case TypeShell:
+		icon = "💻"
+		headerColor = warningColor
+	case TypeFetch:
+		icon = "🌐"
+		headerColor = lipgloss.Color("#3B82F6") // Blue
+	case TypeExec:
 		icon = "⚡"
+		headerColor = warningColor
+	default:
+		icon = "🔐"
+		headerColor = accentColor
 	}
 
-	header := ocHeaderStyle.Render(fmt.Sprintf("%s CONFIRMATION REQUIRED", icon))
+	// Header
+	headerStyle := lipgloss.NewStyle().
+		Foreground(headerColor).
+		Bold(true).
+		MarginBottom(1)
+
+	header := headerStyle.Render(fmt.Sprintf("%s %s", icon, m.details.Title))
 	b.WriteString(header)
 	b.WriteString("\n\n")
 
-	// Title
-	title := ocTitleStyle.Render(m.details.Title)
-	b.WriteString(title)
-	b.WriteString("\n\n")
-
-	// Info rows
+	// Info rows based on type
 	if m.details.ToolName != "" {
 		b.WriteString(ocLabelStyle.Render("Tool"))
 		b.WriteString(ocValueStyle.Render(m.details.ToolName))
@@ -328,14 +312,41 @@ func (m model) viewOpenCode() string {
 		b.WriteString("\n")
 	}
 
-	if m.details.Command != "" {
-		b.WriteString(ocLabelStyle.Render("Command"))
-		b.WriteString(ocValueStyle.Render(m.details.Command))
+	if m.details.URL != "" {
+		b.WriteString(ocLabelStyle.Render("URL"))
+		urlStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#3B82F6")).Underline(true)
+		b.WriteString(urlStyle.Render(m.details.URL))
 		b.WriteString("\n")
 	}
 
+	if m.details.Command != "" {
+		b.WriteString(ocLabelStyle.Render("Command"))
+		cmdStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FCD34D")).
+			Background(lipgloss.Color("#1F2937")).
+			Padding(0, 1)
+		b.WriteString(cmdStyle.Render(m.details.Command))
+		b.WriteString("\n")
+	}
+
+	// Show args for shell/fetch if available
+	if m.details.Type == TypeShell || m.details.Type == TypeFetch || m.details.Type == TypeMCP {
+		if len(m.details.Args) > 0 {
+			b.WriteString("\n")
+			argsJSON, _ := json.MarshalIndent(m.details.Args, "", "  ")
+			argsBox := lipgloss.NewStyle().
+				Foreground(dimTextColor).
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(borderColor).
+				Padding(0, 1).
+				Render(string(argsJSON))
+			b.WriteString(argsBox)
+			b.WriteString("\n")
+		}
+	}
+
 	// Diff viewport for edit confirmations
-	if m.details.Type == TypeEdit && m.ready {
+	if m.details.Type == TypeEdit && m.ready && m.hasDiff {
 		b.WriteString("\n")
 		diffHeader := ocDiffHeaderStyle.Render("─── Changes ───")
 		b.WriteString(diffHeader)
@@ -347,20 +358,22 @@ func (m model) viewOpenCode() string {
 	// Buttons
 	b.WriteString("\n")
 
-	yesBtn := ocButtonStyle.Render(" Yes ")
-	noBtn := ocButtonStyle.Render(" No ")
-	alwaysBtn := ocButtonStyle.Render(" Always ")
+	yesBtn := ocButtonStyle.Render(" [Y]es ")
+	noBtn := ocButtonStyle.Render(" [N]o ")
+	alwaysBtn := ocButtonStyle.Render(" [A]lways ")
 
 	if m.selectedBtn == 0 {
-		yesBtn = ocButtonActiveStyle.Render(" Yes ")
+		yesBtn = ocButtonActiveStyle.Render(" [Y]es ")
 	} else if m.selectedBtn == 1 {
-		noBtn = ocButtonActiveStyle.Render(" No ")
+		noBtn = ocButtonActiveStyle.Render(" [N]o ")
 	} else {
-		alwaysBtn = ocButtonActiveStyle.Render(" Always ")
+		alwaysBtn = ocButtonActiveStyle.Render(" [A]lways ")
 	}
 
 	b.WriteString(yesBtn)
+	b.WriteString(" ")
 	b.WriteString(noBtn)
+	b.WriteString(" ")
 	b.WriteString(alwaysBtn)
 	b.WriteString("\n")
 
@@ -370,46 +383,6 @@ func (m model) viewOpenCode() string {
 
 	// Wrap in container
 	return ocContainerStyle.Render(b.String())
-}
-
-// viewMinimal renders the minimal-style TUI
-func (m model) viewMinimal() string {
-	var b strings.Builder
-
-	// Title
-	title := titleStyle.Render(fmt.Sprintf("🔒 %s", m.details.Title))
-	b.WriteString(title)
-	b.WriteString("\n")
-
-	// Tool info
-	if m.details.ToolName != "" {
-		b.WriteString(infoStyle.Render(fmt.Sprintf("Tool: %s", m.details.ToolName)))
-		b.WriteString("\n")
-	}
-
-	if m.details.FilePath != "" {
-		b.WriteString(infoStyle.Render(fmt.Sprintf("File: %s", m.details.FilePath)))
-		b.WriteString("\n")
-	}
-
-	if m.details.Command != "" {
-		b.WriteString(infoStyle.Render(fmt.Sprintf("Command: %s", m.details.Command)))
-		b.WriteString("\n")
-	}
-
-	b.WriteString("\n")
-
-	// Diff viewport for edit confirmations
-	if m.details.Type == TypeEdit && m.ready {
-		b.WriteString(boxStyle.Render(m.viewport.View()))
-		b.WriteString("\n")
-	}
-
-	// Help text
-	help := helpStyle.Render("[Y]es / [n]o / [a]lways allow this tool")
-	b.WriteString(help)
-
-	return b.String()
 }
 
 // generateDiffOpenCode creates a styled diff for OpenCode theme
@@ -450,73 +423,27 @@ func generateDiffOpenCode(original, new string) string {
 	return b.String()
 }
 
-// generateDiff creates a colored diff between two strings (minimal theme)
-func generateDiff(original, new string) string {
-	dmp := diffmatchpatch.New()
-	diffs := dmp.DiffMain(original, new, true)
-
-	var b strings.Builder
-	for _, diff := range diffs {
-		lines := strings.Split(diff.Text, "\n")
-		for i, line := range lines {
-			if line == "" && i == len(lines)-1 {
-				continue
-			}
-			switch diff.Type {
-			case diffmatchpatch.DiffInsert:
-				b.WriteString(addedStyle.Render("+ " + line))
-			case diffmatchpatch.DiffDelete:
-				b.WriteString(removedStyle.Render("- " + line))
-			case diffmatchpatch.DiffEqual:
-				b.WriteString("  " + line)
-			}
-			if i < len(lines)-1 {
-				b.WriteString("\n")
-			}
-		}
-	}
-	return b.String()
-}
-
-// PromptConfirmation shows an interactive confirmation prompt
+// PromptConfirmation shows an interactive confirmation prompt using TUI
+// If YoloMode is enabled, it automatically approves all operations
 func PromptConfirmation(details Details) (Outcome, error) {
+	// YOLO mode - skip all confirmations
+	if YoloMode {
+		return OutcomeProceedOnce, nil
+	}
+
 	m := initialModel(details)
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	// Use alt screen only for diff views to avoid flickering for simple prompts
+	var opts []tea.ProgramOption
+	if details.Type == TypeEdit && details.OriginalContent != "" && details.NewContent != "" {
+		opts = append(opts, tea.WithAltScreen())
+	}
+
+	p := tea.NewProgram(m, opts...)
 	finalModel, err := p.Run()
 	if err != nil {
 		return OutcomeCancel, err
 	}
 
 	return finalModel.(model).outcome, nil
-}
-
-// PromptConfirmationSimple shows a simple Y/n prompt without TUI (for non-TTY)
-func PromptConfirmationSimple(details Details) (Outcome, error) {
-	fmt.Printf("\n🔒 %s\n", details.Title)
-
-	if details.ToolName != "" {
-		fmt.Printf("   Tool: %s\n", details.ToolName)
-	}
-	if details.FilePath != "" {
-		fmt.Printf("   File: %s\n", details.FilePath)
-	}
-	if details.Command != "" {
-		fmt.Printf("   Command: %s\n", details.Command)
-	}
-
-	fmt.Print("\nProceed? [Y]es / [n]o / [a]lways: ")
-
-	var input string
-	fmt.Scanln(&input)
-	input = strings.ToLower(strings.TrimSpace(input))
-
-	switch input {
-	case "y", "yes", "":
-		return OutcomeProceedOnce, nil
-	case "a", "always":
-		return OutcomeProceedAlways, nil
-	default:
-		return OutcomeCancel, nil
-	}
 }

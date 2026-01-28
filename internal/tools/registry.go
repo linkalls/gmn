@@ -52,6 +52,13 @@ func (r *Registry) registerBuiltins() {
 	r.Register(&GlobTool{rootDir: r.rootDir})
 	r.Register(&SearchFileContentTool{rootDir: r.rootDir})
 	r.Register(&EditFileTool{rootDir: r.rootDir})
+
+	// Web tools
+	r.Register(&WebSearchTool{})
+	r.Register(&WebFetchTool{})
+
+	// Shell tool
+	r.Register(&ShellTool{rootDir: r.rootDir})
 }
 
 // Register adds a tool to the registry

@@ -57,9 +57,10 @@ type Content struct {
 
 // Part represents a content part
 type Part struct {
-	Text         string        `json:"text,omitempty"`
-	FunctionCall *FunctionCall `json:"functionCall,omitempty"`
-	FunctionResp *FunctionResp `json:"functionResponse,omitempty"`
+	Text             string        `json:"text,omitempty"`
+	FunctionCall     *FunctionCall `json:"functionCall,omitempty"`
+	FunctionResp     *FunctionResp `json:"functionResponse,omitempty"`
+	ThoughtSignature string        `json:"thoughtSignature,omitempty"` // Required for Gemini 3 Pro function calling
 }
 
 // FunctionCall represents a tool call
@@ -157,13 +158,14 @@ func (c *Client) Generate(ctx context.Context, req *GenerateRequest) (*GenerateR
 
 // StreamEvent represents a streaming event
 type StreamEvent struct {
-	Type       string         `json:"type"`
-	Model      string         `json:"model,omitempty"`
-	Text       string         `json:"text,omitempty"`
-	ToolCall   *FunctionCall  `json:"tool_call,omitempty"`
-	ToolResult *ToolResult    `json:"tool_result,omitempty"`
-	Usage      *UsageMetadata `json:"usage,omitempty"`
-	Error      string         `json:"error,omitempty"`
+	Type         string         `json:"type"`
+	Model        string         `json:"model,omitempty"`
+	Text         string         `json:"text,omitempty"`
+	ToolCall     *FunctionCall  `json:"tool_call,omitempty"`
+	ToolCallPart *Part          `json:"-"` // Full Part with thought_signature for Gemini 3 Pro
+	ToolResult   *ToolResult    `json:"tool_result,omitempty"`
+	Usage        *UsageMetadata `json:"usage,omitempty"`
+	Error        string         `json:"error,omitempty"`
 }
 
 // ToolResult represents a tool execution result
@@ -203,7 +205,7 @@ func (c *Client) LoadCodeAssist(ctx context.Context) (*LoadCodeAssistResponse, e
 
 	req := LoadCodeAssistRequest{
 		Metadata: ClientMetadata{
-			IdeType:    "GEMINI_CLI",
+			IdeType:    "IDE_UNSPECIFIED",
 			Platform:   "PLATFORM_UNSPECIFIED",
 			PluginType: "GEMINI",
 		},
@@ -314,7 +316,9 @@ func (c *Client) GenerateStream(ctx context.Context, req *GenerateRequest) (<-ch
 						events <- StreamEvent{Type: "content", Text: part.Text}
 					}
 					if part.FunctionCall != nil {
-						events <- StreamEvent{Type: "tool_call", ToolCall: part.FunctionCall}
+						// Create a copy of the Part to preserve thought_signature
+						partCopy := part
+						events <- StreamEvent{Type: "tool_call", ToolCall: part.FunctionCall, ToolCallPart: &partCopy}
 					}
 				}
 			}

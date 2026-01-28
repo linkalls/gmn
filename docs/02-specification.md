@@ -2,23 +2,35 @@
 
 ## 1. システム概要
 
-geminimini は Google Gemini API を利用した非対話型 CLI ツールである。
+gmn は Google Gemini API を利用した CLI ツールである。
 公式 Gemini CLI の認証情報・設定を流用し、軽量・高速な実行環境を提供する。
+
+### 1.1 動作モード
+
+| モード   | 説明                                         |
+| -------- | -------------------------------------------- |
+| One-shot | 単一プロンプトを実行して終了（デフォルト）   |
+| Chat     | 対話的なマルチターン会話、ツール実行サポート |
+| MCP      | MCP サーバー/ツールの管理・実行              |
 
 ## 2. システム構成
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                        geminimini                           │
+│                           gmn                               │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────────────┐│
 │  │   CLI   │  │  Auth   │  │   API   │  │   MCP Client    ││
 │  │ Command │──│ Manager │──│ Client  │──│ (Stdio/SSE/HTTP)││
 │  └─────────┘  └─────────┘  └─────────┘  └─────────────────┘│
 │       │            │            │               │          │
+│       │       ┌────┴────┐       │               │          │
+│       │       │  Tools  │       │               │          │
+│       │       │ Registry│       │               │          │
+│       │       └─────────┘       │               │          │
 │       ▼            ▼            ▼               ▼          │
 │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────────────┐│
-│  │ Config  │  │~/.gemini│  │ Gemini  │  │   MCP Server    ││
+│  │ Config  │  │~/.gemini│  │Code Asst│  │   MCP Server    ││
 │  │ Loader  │  │/oauth_* │  │   API   │  │   (External)    ││
 │  └─────────┘  └─────────┘  └─────────┘  └─────────────────┘│
 └─────────────────────────────────────────────────────────────┘
@@ -29,26 +41,48 @@ geminimini は Google Gemini API を利用した非対話型 CLI ツールであ
 ### 3.1 基本構文
 
 ```
-geminimini [flags] [-p <prompt>]
+gmn [prompt] [flags]           # One-shot モード
+gmn chat [flags]               # Chat モード
+gmn mcp <command> [args]       # MCP モード
 ```
 
 ### 3.2 フラグ一覧
 
-| フラグ | 短縮 | 型 | デフォルト | 説明 |
-|--------|------|-----|-----------|------|
-| `--prompt` | `-p` | string | (必須) | 送信するプロンプト |
-| `--model` | `-m` | string | `gemini-2.5-flash` | 使用するモデル |
-| `--output-format` | `-o` | string | `text` | 出力形式: text, json, stream-json |
-| `--include-files` | `-f` | []string | [] | コンテキストに含めるファイル |
-| `--include-dirs` | `-d` | []string | [] | コンテキストに含めるディレクトリ |
-| `--timeout` | `-t` | duration | `5m` | API タイムアウト |
-| `--debug` | | bool | false | デバッグ出力 |
-| `--version` | `-v` | bool | false | バージョン表示 |
-| `--help` | `-h` | bool | false | ヘルプ表示 |
+#### 共通フラグ
 
-### 3.3 出力形式
+| フラグ      | 短縮 | 型       | デフォルト         | 説明             |
+| ----------- | ---- | -------- | ------------------ | ---------------- |
+| `--model`   | `-m` | string   | `gemini-2.5-flash` | 使用するモデル   |
+| `--timeout` | `-t` | duration | `5m`               | API タイムアウト |
+| `--debug`   |      | bool     | false              | デバッグ出力     |
+| `--version` | `-v` | bool     | false              | バージョン表示   |
+| `--help`    | `-h` | bool     | false              | ヘルプ表示       |
+
+#### One-shot モード専用フラグ
+
+| フラグ            | 短縮 | 型       | デフォルト | 説明                              |
+| ----------------- | ---- | -------- | ---------- | --------------------------------- |
+| `--prompt`        | `-p` | string   | (必須)     | 送信するプロンプト                |
+| `--output-format` | `-o` | string   | `text`     | 出力形式: text, json, stream-json |
+| `--file`          | `-f` | []string | []         | コンテキストに含めるファイル      |
+
+### 3.3 サポートモデル
+
+| モデル                 | Tier            | 備考                   |
+| ---------------------- | --------------- | ---------------------- |
+| `gemini-2.5-flash`     | Free / Standard | デフォルト、高速       |
+| `gemini-2.5-pro`       | Free / Standard | より高性能             |
+| `gemini-3-pro-preview` | Standard        | 最新、コーディング向け |
+
+**Gemini 3 Pro の特記事項:**
+
+- `thoughtSignature` フィールドによる思考署名が必要
+- ツール呼び出し時、署名を保持して返送する必要がある
+
+### 3.4 出力形式
 
 #### text（デフォルト）
+
 ストリーミングでプレーンテキストをリアルタイム出力。人間が見る用途に最適。
 
 ```
@@ -57,6 +91,7 @@ Hello! How can I help you today?  # ← リアルタイムで文字が流れる
 ```
 
 #### json
+
 非ストリーミング。生成完了後にまとめて構造化 JSON を出力。スクリプトでのパース用途に最適。
 
 ```json
@@ -73,6 +108,7 @@ Hello! How can I help you today?  # ← リアルタイムで文字が流れる
 ```
 
 #### stream-json
+
 ストリーミング形式で NDJSON (Newline Delimited JSON) を出力。リアルタイム処理が必要なスクリプト用途。
 
 ```json
@@ -87,14 +123,14 @@ Hello! How can I help you today?  # ← リアルタイムで文字が流れる
 
 **ストリーミングイベント種別**
 
-| type | 説明 |
-|------|------|
-| `start` | 生成開始、モデル名を含む |
-| `content` | テキストチャンク |
-| `tool_call` | MCPツール呼び出し要求 |
-| `tool_result` | MCPツール実行結果 |
-| `done` | 生成完了、使用量を含む |
-| `error` | エラー発生 |
+| type          | 説明                     |
+| ------------- | ------------------------ |
+| `start`       | 生成開始、モデル名を含む |
+| `content`     | テキストチャンク         |
+| `tool_call`   | MCPツール呼び出し要求    |
+| `tool_result` | MCPツール実行結果        |
+| `done`        | 生成完了、使用量を含む   |
+| `error`       | エラー発生               |
 
 ### 3.4 標準入力
 
@@ -105,6 +141,7 @@ cat code.go | geminimini -p "このコードをレビューして"
 ```
 
 上記は以下と等価:
+
 ```
 geminimini -p "<code.goの内容>\n\nこのコードをレビューして"
 ```
@@ -138,15 +175,16 @@ geminimini -p "<code.goの内容>\n\nこのコードをレビューして"
 
 **プラットフォーム別トークン保存先**
 
-| OS | 優先 | フォールバック |
-|----|------|--------------|
-| macOS | Keychain (`gemini-cli-oauth`) | `~/.gemini/oauth_creds.json` |
-| Linux | - | `~/.gemini/oauth_creds.json` |
-| Windows | - | `~/.gemini/oauth_creds.json` |
+| OS      | 優先                          | フォールバック               |
+| ------- | ----------------------------- | ---------------------------- |
+| macOS   | Keychain (`gemini-cli-oauth`) | `~/.gemini/oauth_creds.json` |
+| Linux   | -                             | `~/.gemini/oauth_creds.json` |
+| Windows | -                             | `~/.gemini/oauth_creds.json` |
 
 ### 4.2 認証ファイル構造
 
 #### ~/.gemini/settings.json
+
 ```json
 {
   "security": {
@@ -158,6 +196,7 @@ geminimini -p "<code.goの内容>\n\nこのコードをレビューして"
 ```
 
 #### ~/.gemini/oauth_creds.json（レガシー形式）
+
 ```json
 {
   "access_token": "ya29.xxx...",
@@ -168,6 +207,7 @@ geminimini -p "<code.goの内容>\n\nこのコードをレビューして"
 ```
 
 #### ~/.gemini/google_accounts.json
+
 ```json
 {
   "active": "user@gmail.com",
@@ -206,9 +246,7 @@ geminimini -p "<code.goの内容>\n\nこのコードをレビューして"
   "contents": [
     {
       "role": "user",
-      "parts": [
-        {"text": "プロンプト内容"}
-      ]
+      "parts": [{ "text": "プロンプト内容" }]
     }
   ],
   "generationConfig": {
@@ -227,9 +265,7 @@ geminimini -p "<code.goの内容>\n\nこのコードをレビューして"
   "candidates": [
     {
       "content": {
-        "parts": [
-          {"text": "レスポンス内容"}
-        ],
+        "parts": [{ "text": "レスポンス内容" }],
         "role": "model"
       },
       "finishReason": "STOP"
@@ -247,11 +283,11 @@ geminimini -p "<code.goの内容>\n\nこのコードをレビューして"
 
 ### 6.1 サポートするトランスポート
 
-| トランスポート | 設定方法 | 用途 |
-|--------------|---------|------|
-| Stdio | `command` + `args` | ローカルプロセス |
-| SSE | `url` + `type: "sse"` | リモート (Server-Sent Events) |
-| HTTP | `url` + `type: "http"` | リモート (Streamable HTTP) |
+| トランスポート | 設定方法               | 用途                          |
+| -------------- | ---------------------- | ----------------------------- |
+| Stdio          | `command` + `args`     | ローカルプロセス              |
+| SSE            | `url` + `type: "sse"`  | リモート (Server-Sent Events) |
+| HTTP           | `url` + `type: "http"` | リモート (Streamable HTTP)    |
 
 ### 6.2 MCP 設定形式
 
@@ -261,7 +297,7 @@ geminimini -p "<code.goの内容>\n\nこのコードをレビューして"
     "serverName": {
       "command": "executable",
       "args": ["arg1", "arg2"],
-      "env": {"KEY": "value"},
+      "env": { "KEY": "value" },
       "cwd": "/path/to/dir",
       "timeout": 600000
     }
@@ -274,44 +310,98 @@ geminimini -p "<code.goの内容>\n\nこのコードをレビューして"
 JSON-RPC 2.0 over 各トランスポート
 
 **ツール機能**
+
 - `tools/list` - ツール一覧取得
 - `tools/call` - ツール実行
 
 **プロンプト機能**
+
 - `prompts/list` - プロンプトテンプレート一覧取得
 - `prompts/get` - プロンプト取得（引数展開）
 
 **リソース機能**
+
 - `resources/list` - リソース一覧取得
 - `resources/read` - リソース読み取り
 
 **接続管理**
+
 - `initialize` - サーバー初期化・キャパビリティ交換
 - `shutdown` - 接続終了
 
-## 7. エラー仕様
+## 7. チャットモード仕様
 
-### 7.1 終了コード
+### 7.1 概要
 
-| コード | 意味 |
-|-------|------|
-| 0 | 正常終了 |
-| 1 | 一般エラー |
-| 2 | 認証エラー |
-| 3 | API エラー |
-| 4 | 設定エラー |
-| 5 | MCP エラー |
-| 130 | ユーザー中断 (Ctrl+C) |
+`gmn chat` コマンドで対話的なセッションを開始する。
+マルチターン会話、ビルトインツール実行、MCP連携をサポート。
+
+### 7.2 ビルトインツール
+
+チャットモードで自動的に有効になるファイルシステムツール:
+
+| ツール                | 説明                  | 確認     |
+| --------------------- | --------------------- | -------- |
+| `list_directory`      | ディレクトリ一覧      | 不要     |
+| `read_file`           | ファイル読み取り      | 不要     |
+| `write_file`          | ファイル書き込み      | **必要** |
+| `edit_file`           | ファイル編集          | **必要** |
+| `glob`                | パターンマッチ検索    | 不要     |
+| `search_file_content` | テキスト/正規表現検索 | 不要     |
+
+書き込み系ツールは実行前にユーザー確認を求める。
+
+### 7.3 ツール応答フォーマット
+
+Gemini 3 Pro では `thoughtSignature` の保持が必須:
+
+```json
+{
+  "role": "model",
+  "parts": [
+    {
+      "functionCall": { "name": "list_directory", "args": { "path": "." } },
+      "thoughtSignature": "Cn8Bjz1rX007gEhDz..."
+    }
+  ]
+}
+```
+
+ツール結果を返す際も、元の `functionCall` パートの `thoughtSignature` を保持したまま履歴に追加する必要がある。
+
+### 7.4 会話履歴
+
+チャットセッション中、以下の形式で履歴を保持:
+
+1. ユーザー入力 (`role: "user"`)
+2. モデル応答/ツール呼び出し (`role: "model"`)
+3. ツール結果 (`role: "user"`, `functionResponse` パート)
+
+## 8. エラー仕様
+
+### 8.1 終了コード
+
+| コード | 意味                  |
+| ------ | --------------------- |
+| 0      | 正常終了              |
+| 1      | 一般エラー            |
+| 2      | 認証エラー            |
+| 3      | API エラー            |
+| 4      | 設定エラー            |
+| 5      | MCP エラー            |
+| 130    | ユーザー中断 (Ctrl+C) |
 
 ### 7.2 エラー出力形式
 
 #### text モード
+
 ```
 Error: authentication failed: token expired
 Please re-authenticate using: gemini
 ```
 
 #### json モード
+
 ```json
 {
   "error": {

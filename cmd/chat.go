@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -18,8 +19,32 @@ import (
 )
 
 var (
-	tuiTheme string // TUI theme: "opencode" or "minimal"
+	yoloMode      bool   // Skip all confirmations
+	chatPrompt    string // Initial prompt from -p flag (chat-specific)
+	shellPath     string // Custom shell path
+	sessionTokens struct {
+		input  int
+		output int
+	}
 )
+
+// DefaultShell returns the default shell for the current OS
+func DefaultShell() string {
+	if runtime.GOOS == "windows" {
+		// Check if Git Bash is available
+		gitBashPaths := []string{
+			`C:\Program Files\Git\bin\bash.exe`,
+			`C:\Program Files (x86)\Git\bin\bash.exe`,
+		}
+		for _, p := range gitBashPaths {
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
+		}
+		return "powershell"
+	}
+	return "bash"
+}
 
 var chatCmd = &cobra.Command{
 	Use:   "chat",
@@ -27,14 +52,43 @@ var chatCmd = &cobra.Command{
 	RunE:  runChat,
 }
 
-// Tool execution styles (OpenCode-inspired)
+// TUI styles
 var (
 	// Modern accent colors
 	accentPurple = lipgloss.Color("#7C3AED")
 	accentGreen  = lipgloss.Color("#10B981")
+	accentBlue   = lipgloss.Color("#3B82F6")
 	mutedGray    = lipgloss.Color("#6B7280")
 	dimGray      = lipgloss.Color("#9CA3AF")
+	borderColor  = lipgloss.Color("#374151")
 
+	// Header styles
+	logoStyle = lipgloss.NewStyle().
+			Foreground(accentPurple).
+			Bold(true)
+
+	modelBadgeStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Background(accentPurple).
+			Padding(0, 1).
+			Bold(true)
+
+	infoBadgeStyle = lipgloss.NewStyle().
+			Foreground(dimGray).
+			Background(lipgloss.Color("#1F2937")).
+			Padding(0, 1)
+
+	headerBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(borderColor).
+			Padding(0, 2).
+			MarginBottom(1)
+
+	promptStyle = lipgloss.NewStyle().
+			Foreground(accentGreen).
+			Bold(true)
+
+	// Tool styles
 	toolCallStyle = lipgloss.NewStyle().
 			Foreground(accentPurple).
 			Bold(true)
@@ -49,34 +103,111 @@ var (
 			Padding(0, 1).
 			MarginTop(1).
 			MarginBottom(1)
+
+	// Stats styles
+	statsBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(borderColor).
+			Padding(0, 2).
+			MarginTop(1)
 )
 
 func init() {
 	rootCmd.AddCommand(chatCmd)
 
 	chatCmd.Flags().StringVarP(&model, "model", "m", "gemini-2.5-flash", "Model to use")
+	chatCmd.Flags().StringVarP(&chatPrompt, "prompt", "p", "", "Initial prompt (alternative to positional args)")
 	chatCmd.Flags().StringArrayVarP(&files, "file", "f", nil, "Files to include in context")
 	chatCmd.Flags().DurationVarP(&timeout, "timeout", "t", 5*time.Minute, "API timeout")
 	chatCmd.Flags().BoolVar(&debug, "debug", false, "Enable debug output")
-	chatCmd.Flags().StringVar(&tuiTheme, "theme", "opencode", "TUI theme: opencode, minimal")
+	chatCmd.Flags().BoolVar(&yoloMode, "yolo", false, "Skip all confirmation prompts (dangerous!)")
+	chatCmd.Flags().StringVar(&shellPath, "shell", "", "Shell to use for commands (default: auto-detect)")
+}
+
+// displayHeader shows a rich header with model info
+func displayHeader(modelName string, yolo bool) {
+	// Logo
+	logo := logoStyle.Render("✨ gmn")
+
+	// Model badge
+	modelBadge := modelBadgeStyle.Render(modelName)
+
+	// Info badges
+	var badges []string
+	badges = append(badges, modelBadge)
+
+	if yolo {
+		yoloBadge := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Background(lipgloss.Color("#EF4444")).
+			Padding(0, 1).
+			Bold(true).
+			Render("YOLO")
+		badges = append(badges, yoloBadge)
+	}
+
+	cwd, _ := os.Getwd()
+	cwdBadge := infoBadgeStyle.Render("📁 " + cwd)
+
+	// Build header
+	header := fmt.Sprintf("%s  %s\n%s", logo, strings.Join(badges, " "), cwdBadge)
+	fmt.Fprintln(os.Stderr, headerBoxStyle.Render(header))
+
+	// Help hint
+	helpHint := lipgloss.NewStyle().Foreground(dimGray).Render("Type /help for commands, /exit to quit")
+	fmt.Fprintln(os.Stderr, helpHint)
+	fmt.Fprintln(os.Stderr)
+}
+
+// displayStats shows session statistics
+func displayStats(inputTokens, outputTokens int, duration time.Duration) {
+	totalTokens := inputTokens + outputTokens
+
+	tokenStyle := lipgloss.NewStyle().Foreground(accentBlue).Bold(true)
+	labelStyle := lipgloss.NewStyle().Foreground(dimGray)
+
+	stats := fmt.Sprintf(
+		"%s %s   %s %s   %s %s   %s %s",
+		labelStyle.Render("Input:"),
+		tokenStyle.Render(fmt.Sprintf("%d", inputTokens)),
+		labelStyle.Render("Output:"),
+		tokenStyle.Render(fmt.Sprintf("%d", outputTokens)),
+		labelStyle.Render("Total:"),
+		tokenStyle.Render(fmt.Sprintf("%d", totalTokens)),
+		labelStyle.Render("Duration:"),
+		tokenStyle.Render(duration.Round(time.Second).String()),
+	)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, statsBoxStyle.Render("📊 Session Stats\n"+stats))
+}
+
+// displayPrompt shows the input prompt
+func displayPrompt() {
+	fmt.Fprint(os.Stderr, promptStyle.Render("❯ "))
 }
 
 func runChat(cmd *cobra.Command, args []string) error {
-	// Set TUI theme
-	switch tuiTheme {
-	case "minimal":
-		confirmation.CurrentTheme = confirmation.ThemeMinimal
-	default:
-		confirmation.CurrentTheme = confirmation.ThemeOpenCode
+	startTime := time.Now()
+
+	// Set YOLO mode if requested
+	if yoloMode {
+		confirmation.YoloMode = true
 	}
+
+	// Set shell path for tools
+	if shellPath == "" {
+		shellPath = DefaultShell()
+	}
+	tools.SetShellPath(shellPath)
 
 	// For chat, we don't want a short timeout context for the whole session.
 	// We'll use a background context for setup, and per-request timeout.
 	ctx := context.Background()
 
-	// Initial prompt from args
-	initialPrompt := ""
-	if len(args) > 0 {
+	// Initial prompt from -p flag or args
+	initialPrompt := chatPrompt
+	if initialPrompt == "" && len(args) > 0 {
 		initialPrompt = strings.Join(args, " ")
 	}
 
@@ -88,6 +219,9 @@ func runChat(cmd *cobra.Command, args []string) error {
 
 	// Apply tier-based default model if user didn't specify
 	effectiveModel := getEffectiveModel(model, userTier, cmd.Flags().Changed("model"))
+
+	// Display rich header
+	displayHeader(effectiveModel, yoloMode)
 
 	// Initialize tool registry with current working directory
 	cwd, err := os.Getwd()
@@ -116,7 +250,13 @@ func runChat(cmd *cobra.Command, args []string) error {
 
 	// If there is initial input, process it first
 	if inputText != "" {
-		fmt.Println("> " + strings.ReplaceAll(inputText, "\n", "\n  "))
+		userStyle := lipgloss.NewStyle().Foreground(accentBlue)
+		fmt.Fprintln(os.Stderr, userStyle.Render("❯ "+strings.Split(inputText, "\n")[0]))
+		if strings.Contains(inputText, "\n") {
+			fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(dimGray).Render("  (+ file contents)"))
+		}
+		fmt.Fprintln(os.Stderr)
+
 		err := processWithToolLoop(ctx, apiClient, projectID, effectiveModel, inputText, &history, formatter, toolRegistry, allowList)
 		if err != nil {
 			formatter.WriteError(err)
@@ -125,21 +265,35 @@ func runChat(cmd *cobra.Command, args []string) error {
 
 	// Start REPL
 	scanner := bufio.NewScanner(os.Stdin)
-	if inputText != "" || initialPrompt == "" {
-		fmt.Print("> ")
-	}
+	displayPrompt()
 
 	for scanner.Scan() {
 		line := scanner.Text()
 
 		// Handle empty lines
 		if strings.TrimSpace(line) == "" {
-			fmt.Print("> ")
+			displayPrompt()
 			continue
 		}
 
-		if line == "/exit" || line == "/quit" {
-			break
+		// Handle commands
+		switch strings.ToLower(strings.TrimSpace(line)) {
+		case "/exit", "/quit", "/q":
+			displayStats(sessionTokens.input, sessionTokens.output, time.Since(startTime))
+			return nil
+		case "/help", "/h":
+			showHelp()
+			displayPrompt()
+			continue
+		case "/clear":
+			history = nil
+			fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(accentGreen).Render("✓ Conversation cleared"))
+			displayPrompt()
+			continue
+		case "/stats":
+			displayStats(sessionTokens.input, sessionTokens.output, time.Since(startTime))
+			displayPrompt()
+			continue
 		}
 
 		// Process request with tool loop
@@ -148,14 +302,30 @@ func runChat(cmd *cobra.Command, args []string) error {
 			formatter.WriteError(err)
 		}
 
-		fmt.Print("> ")
+		displayPrompt()
 	}
 
 	if err := scanner.Err(); err != nil {
 		return err
 	}
 
+	// Show stats on normal exit
+	displayStats(sessionTokens.input, sessionTokens.output, time.Since(startTime))
 	return nil
+}
+
+// showHelp displays available commands
+func showHelp() {
+	helpStyle := lipgloss.NewStyle().Foreground(dimGray)
+	cmdStyle := lipgloss.NewStyle().Foreground(accentPurple).Bold(true)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(accentBlue).Bold(true).Render("Available Commands:"))
+	fmt.Fprintln(os.Stderr, fmt.Sprintf("  %s  %s", cmdStyle.Render("/help, /h    "), helpStyle.Render("Show this help")))
+	fmt.Fprintln(os.Stderr, fmt.Sprintf("  %s  %s", cmdStyle.Render("/exit, /q    "), helpStyle.Render("Exit the chat")))
+	fmt.Fprintln(os.Stderr, fmt.Sprintf("  %s  %s", cmdStyle.Render("/clear       "), helpStyle.Render("Clear conversation history")))
+	fmt.Fprintln(os.Stderr, fmt.Sprintf("  %s  %s", cmdStyle.Render("/stats       "), helpStyle.Render("Show token usage stats")))
+	fmt.Fprintln(os.Stderr)
 }
 
 // generateStreamWithFallback attempts to stream with fallback models on retryable errors
@@ -256,7 +426,7 @@ func processWithToolLoop(
 		}
 
 		var fullResponse strings.Builder
-		var pendingToolCalls []*api.FunctionCall
+		var pendingToolCallParts []*api.Part // Store full Parts with thought_signature for Gemini 3 Pro
 
 		for event := range stream {
 			if event.Type == "error" {
@@ -264,9 +434,20 @@ func processWithToolLoop(
 				return fmt.Errorf(event.Error)
 			}
 
+			// Track token usage
+			if event.Type == "done" && event.Usage != nil {
+				sessionTokens.input += event.Usage.PromptTokenCount
+				sessionTokens.output += event.Usage.CandidatesTokenCount
+			}
+
 			// Handle tool calls
 			if event.Type == "tool_call" && event.ToolCall != nil {
-				pendingToolCalls = append(pendingToolCalls, event.ToolCall)
+				// Use ToolCallPart if available (contains thought_signature), otherwise create Part
+				if event.ToolCallPart != nil {
+					pendingToolCallParts = append(pendingToolCallParts, event.ToolCallPart)
+				} else {
+					pendingToolCallParts = append(pendingToolCallParts, &api.Part{FunctionCall: event.ToolCall})
+				}
 				// Display tool call notification (OpenCode style)
 				displayToolCall(event.ToolCall)
 				continue
@@ -286,7 +467,7 @@ func processWithToolLoop(
 		cancel()
 
 		// If no tool calls, we're done
-		if len(pendingToolCalls) == 0 {
+		if len(pendingToolCallParts) == 0 {
 			// Add model response to history
 			*history = append(*history, api.Content{
 				Role:  "model",
@@ -297,7 +478,8 @@ func processWithToolLoop(
 		}
 
 		// Execute tool calls
-		for _, fc := range pendingToolCalls {
+		for _, fcPart := range pendingToolCallParts {
+			fc := fcPart.FunctionCall
 			// Generate a response ID (use FunctionCall ID if present, otherwise generate one)
 			responseID := fc.ID
 			if responseID == "" {
@@ -306,11 +488,11 @@ func processWithToolLoop(
 
 			tool, ok := toolRegistry.Get(fc.Name)
 			if !ok {
-				// Unknown tool - add error response
+				// Unknown tool - add error response (preserve thought_signature)
 				*history = append(*history,
 					api.Content{
 						Role:  "model",
-						Parts: []api.Part{{FunctionCall: fc}},
+						Parts: []api.Part{*fcPart}, // Use full Part with thought_signature
 					},
 					api.Content{
 						Role: "user",
@@ -333,11 +515,11 @@ func processWithToolLoop(
 
 				switch outcome {
 				case confirmation.OutcomeCancel:
-					// User cancelled - add cancelled response
+					// User cancelled - add cancelled response (preserve thought_signature)
 					*history = append(*history,
 						api.Content{
 							Role:  "model",
-							Parts: []api.Part{{FunctionCall: fc}},
+							Parts: []api.Part{*fcPart}, // Use full Part with thought_signature
 						},
 						api.Content{
 							Role: "user",
@@ -364,11 +546,11 @@ func processWithToolLoop(
 			// Display result (OpenCode style)
 			displayToolResult(tool, result)
 
-			// Add tool call and response to history
+			// Add tool call and response to history (preserve thought_signature for Gemini 3 Pro)
 			*history = append(*history,
 				api.Content{
 					Role:  "model",
-					Parts: []api.Part{{FunctionCall: fc}},
+					Parts: []api.Part{*fcPart}, // Use full Part with thought_signature
 				},
 				api.Content{
 					Role: "user",
@@ -401,6 +583,16 @@ func promptToolConfirmation(tool tools.BuiltinTool, args map[string]interface{})
 		details.FilePath = path
 	}
 
+	// Get URL if available (for web_fetch)
+	if urlStr, ok := args["url"].(string); ok {
+		details.URL = urlStr
+	}
+
+	// Get command if available (for shell)
+	if cmd, ok := args["command"].(string); ok {
+		details.Command = cmd
+	}
+
 	// For edit confirmations, try to get diff content
 	if tool.ConfirmationType() == "edit" {
 		if getter, ok := tool.(interface {
@@ -416,27 +608,31 @@ func promptToolConfirmation(tool tools.BuiltinTool, args map[string]interface{})
 		}
 	}
 
-	// Use simple prompt if diff is not available or for non-edit types
-	if details.OriginalContent == "" && details.NewContent == "" {
-		return confirmation.PromptConfirmationSimple(details)
-	}
-
 	return confirmation.PromptConfirmation(details)
 }
 
 // displayToolCall shows a stylish tool call notification
 func displayToolCall(fc *api.FunctionCall) {
-	if tuiTheme == "minimal" {
-		fmt.Fprintf(os.Stderr, "\n🔧 Calling: %s\n", fc.Name)
-		return
-	}
-
 	// OpenCode style
 	var argsPreview string
 	if path, ok := fc.Args["path"].(string); ok {
 		argsPreview = path
 	} else if pattern, ok := fc.Args["pattern"].(string); ok {
 		argsPreview = pattern
+	} else if url, ok := fc.Args["url"].(string); ok {
+		argsPreview = url
+	} else if cmd, ok := fc.Args["command"].(string); ok {
+		if len(cmd) > 40 {
+			argsPreview = cmd[:37] + "..."
+		} else {
+			argsPreview = cmd
+		}
+	} else if query, ok := fc.Args["query"].(string); ok {
+		if len(query) > 40 {
+			argsPreview = query[:37] + "..."
+		} else {
+			argsPreview = query
+		}
 	}
 
 	header := toolCallStyle.Render("⚡ TOOL")
@@ -452,11 +648,6 @@ func displayToolCall(fc *api.FunctionCall) {
 
 // displayToolResult shows a stylish tool result notification
 func displayToolResult(tool tools.BuiltinTool, result map[string]interface{}) {
-	if tuiTheme == "minimal" {
-		fmt.Fprintf(os.Stderr, "   ✓ %s done\n\n", tool.DisplayName())
-		return
-	}
-
 	// OpenCode style
 	successStyle := lipgloss.NewStyle().Foreground(accentGreen).Bold(true)
 	dimStyle := lipgloss.NewStyle().Foreground(dimGray)
