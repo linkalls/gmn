@@ -19,6 +19,7 @@
   <a href="#-installation">Installation</a> •
   <a href="#-quick-start">Quick Start</a> •
   <a href="#-interactive-chat">Chat Mode</a> •
+  <a href="#-built-in-tools">Tools</a> •
   <a href="#-mcp-support">MCP</a> •
   <a href="#-benchmarks">Benchmarks</a>
 </p>
@@ -42,9 +43,11 @@ $ time gemini -p "hi" > /dev/null
 ### ✨ Features
 
 - **Fast startup** — Native Go binary, no runtime overhead
-- **Interactive chat mode** — Multi-turn conversations with tool execution
-- **Gemini 3 Pro support** — Full compatibility with latest models including `gemini-3-pro-preview`
-- **Built-in tools** — File operations, search, and more (in chat mode)
+- **Interactive chat mode** — Rich TUI with multi-turn conversations
+- **Built-in tools** — File operations, web search, shell commands
+- **YOLO mode** — Skip confirmations for automated workflows (`--yolo`)
+- **Session stats** — Token usage tracking with Ctrl+C graceful exit
+- **Gemini 3 Pro support** — Full compatibility with `gemini-3-pro-preview`
 - **MCP support** — Connect to Model Context Protocol servers
 - **Credential reuse** — Uses existing Gemini CLI authentication
 
@@ -83,6 +86,9 @@ gmn chat
 # Chat with specific model
 gmn chat -m gemini-3-pro-preview
 
+# Chat with initial prompt
+gmn chat -p "Review this codebase"
+
 # With file context
 gmn "Review this code" -f main.go
 
@@ -95,25 +101,71 @@ gmn "List 3 colors" -o json
 
 ## 💬 Interactive Chat
 
-Start an interactive session with tool execution support:
+Start an interactive session with a rich TUI and tool execution support:
 
 ```bash
-gmn chat                           # Default model (gemini-2.5-flash)
-gmn chat -m gemini-3-pro-preview   # Use Gemini 3 Pro
+gmn chat                              # Default model (gemini-2.5-flash)
+gmn chat -m gemini-3-pro-preview      # Use Gemini 3 Pro
+gmn chat -p "explain this codebase"   # Start with a prompt
+gmn chat --yolo                       # Skip all confirmations (dangerous!)
+gmn chat --shell /bin/zsh             # Use custom shell
 ```
 
-### Built-in Tools (Chat Mode)
+### TUI Features
 
-| Tool                  | Description                    |
-| --------------------- | ------------------------------ |
-| `list_directory`      | List contents of a directory   |
-| `read_file`           | Read file contents             |
-| `write_file`          | Write content to a file        |
-| `edit_file`           | Edit file by replacing text    |
-| `glob`                | Find files matching a pattern  |
-| `search_file_content` | Search for text/regex in files |
+```
+╭──────────────────────────────────────╮
+│  ✨ gmn   gemini-3-pro-preview       │
+│  📁 /path/to/your/project            │
+╰──────────────────────────────────────╯
+Type /help for commands, /exit to quit
 
-Tools are automatically called by Gemini when needed. You'll be prompted for confirmation before file modifications.
+❯ _
+```
+
+- **Rich header** — Model badge, working directory, YOLO indicator
+- **Thinking indicator** — Spinner while waiting for response
+- **Tool notifications** — Visual feedback for tool calls
+- **Session stats** — Token usage on exit (including Ctrl+C)
+
+### Chat Commands
+
+| Command       | Description                |
+| ------------- | -------------------------- |
+| `/help`, `/h` | Show available commands    |
+| `/exit`, `/q` | Exit with session stats    |
+| `/clear`      | Clear conversation history |
+| `/stats`      | Show current token usage   |
+
+## 🔧 Built-in Tools
+
+In chat mode, Gemini can automatically call these tools:
+
+| Tool                  | Description                    | Confirmation |
+| --------------------- | ------------------------------ | ------------ |
+| `list_directory`      | List contents of a directory   | No           |
+| `read_file`           | Read file contents             | No           |
+| `write_file`          | Write content to a file        | **Yes**      |
+| `edit_file`           | Edit file by replacing text    | **Yes**      |
+| `glob`                | Find files matching a pattern  | No           |
+| `search_file_content` | Search for text/regex in files | No           |
+| `web_search`          | Search the web (DuckDuckGo)    | No           |
+| `web_fetch`           | Fetch and parse web pages      | **Yes**      |
+| `shell`               | Execute shell commands         | **Yes**      |
+
+### Confirmation Prompt
+
+For dangerous operations, gmn shows a rich confirmation dialog:
+
+```
+╭─ Allow Shell Command? ────────────────────╮
+│  Command: rm -rf ./build                  │
+│                                           │
+│  [y] Yes  [n] No  [a] Always allow shell  │
+╰───────────────────────────────────────────╯
+```
+
+Use `--yolo` to skip all confirmations (be careful!).
 
 ## 📋 Usage
 
@@ -124,8 +176,10 @@ gmn mcp <command>
 
 Commands:
   chat                         Start interactive chat session
+  mcp list                     List MCP servers and tools
+  mcp call <server> <tool>     Call an MCP tool
 
-Flags:
+Global Flags:
   -p, --prompt string          Prompt (alternative to positional arg)
   -m, --model string           Model (default "gemini-2.5-flash")
   -f, --file strings           Files to include
@@ -135,21 +189,21 @@ Flags:
   -v, --version                Version
 
 Chat Flags:
-  -m, --model string           Model (default "gemini-2.5-flash",
-                               recommended for Code Assist: "gemini-3-pro-preview")
-
-MCP Commands:
-  gmn mcp list                 List MCP servers and tools
-  gmn mcp call <server> <tool> Call an MCP tool
+  -p, --prompt string          Initial prompt to send
+  -m, --model string           Model (default based on tier)
+  -f, --file strings           Files to include in context
+      --yolo                   Skip all confirmation prompts
+      --shell string           Custom shell path (default: auto-detect)
 ```
 
 ### Supported Models
 
-| Model                  | Tier            | Notes                   |
-| ---------------------- | --------------- | ----------------------- |
-| `gemini-2.5-flash`     | Free / Standard | Default, fast responses |
-| `gemini-2.5-pro`       | Free / Standard | More capable            |
-| `gemini-3-pro-preview` | Standard        | Latest, best for coding |
+| Model                    | Tier            | Notes                   |
+| ------------------------ | --------------- | ----------------------- |
+| `gemini-2.5-flash`       | Free / Standard | Default, fast responses |
+| `gemini-2.5-pro`         | Free / Standard | More capable            |
+| `gemini-3-pro-preview`   | Standard        | Latest, best for coding |
+| `gemini-3-flash-preview` | Standard        | Fast Gemini 3           |
 
 ## 🔌 MCP Support
 
@@ -209,4 +263,5 @@ This project is a derivative work based on [Gemini CLI](https://github.com/googl
 ## 🙏 Acknowledgments
 
 - [Google Gemini CLI](https://github.com/google-gemini/gemini-cli) — The incredible original
+- [OpenAI Codex CLI](https://github.com/openai/codex) — TUI design inspiration
 - [Google Gemini API](https://ai.google.dev/) — The underlying API

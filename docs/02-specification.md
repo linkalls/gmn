@@ -66,13 +66,23 @@ gmn mcp <command> [args]       # MCP モード
 | `--output-format` | `-o` | string   | `text`     | 出力形式: text, json, stream-json |
 | `--file`          | `-f` | []string | []         | コンテキストに含めるファイル      |
 
+#### Chat モード専用フラグ
+
+| フラグ     | 短縮 | 型       | デフォルト | 説明                         |
+| ---------- | ---- | -------- | ---------- | ---------------------------- |
+| `--prompt` | `-p` | string   | ""         | 初期プロンプト               |
+| `--file`   | `-f` | []string | []         | コンテキストに含めるファイル |
+| `--yolo`   |      | bool     | false      | 確認プロンプトをスキップ     |
+| `--shell`  |      | string   | 自動検出   | 使用するシェルのパス         |
+
 ### 3.3 サポートモデル
 
-| モデル                 | Tier            | 備考                   |
-| ---------------------- | --------------- | ---------------------- |
-| `gemini-2.5-flash`     | Free / Standard | デフォルト、高速       |
-| `gemini-2.5-pro`       | Free / Standard | より高性能             |
-| `gemini-3-pro-preview` | Standard        | 最新、コーディング向け |
+| モデル                   | Tier            | 備考                   |
+| ------------------------ | --------------- | ---------------------- |
+| `gemini-2.5-flash`       | Free / Standard | デフォルト、高速       |
+| `gemini-2.5-pro`         | Free / Standard | より高性能             |
+| `gemini-3-pro-preview`   | Standard        | 最新、コーディング向け |
+| `gemini-3-flash-preview` | Standard        | Gemini 3 高速版        |
 
 **Gemini 3 Pro の特記事項:**
 
@@ -86,7 +96,7 @@ gmn mcp <command> [args]       # MCP モード
 ストリーミングでプレーンテキストをリアルタイム出力。人間が見る用途に最適。
 
 ```
-$ geminimini -p "Hello"
+$ gmn "Hello"
 Hello! How can I help you today?  # ← リアルタイムで文字が流れる
 ```
 

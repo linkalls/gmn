@@ -181,8 +181,11 @@ func init() {
 
 // displayHeader shows a rich header with model info
 func displayHeader(modelName string, yolo bool) {
-	// Logo
+	// Logo and version
 	logo := logoStyle.Render("✨ gmn")
+	versionBadge := lipgloss.NewStyle().
+		Foreground(dimGray).
+		Render("Gemini CLI")
 
 	// Model badge
 	modelBadge := modelBadgeStyle.Render(modelName)
@@ -197,7 +200,7 @@ func displayHeader(modelName string, yolo bool) {
 			Background(lipgloss.Color("#EF4444")).
 			Padding(0, 1).
 			Bold(true).
-			Render("YOLO")
+			Render("⚡ YOLO")
 		badges = append(badges, yoloBadge)
 	}
 
@@ -205,12 +208,25 @@ func displayHeader(modelName string, yolo bool) {
 	cwdBadge := infoBadgeStyle.Render("📁 " + cwd)
 
 	// Build header
-	header := fmt.Sprintf("%s  %s\n%s", logo, strings.Join(badges, " "), cwdBadge)
+	header := fmt.Sprintf("%s %s  %s\n%s", logo, versionBadge, strings.Join(badges, " "), cwdBadge)
 	fmt.Fprintln(os.Stderr, headerBoxStyle.Render(header))
 
-	// Help hint
-	helpHint := lipgloss.NewStyle().Foreground(dimGray).Render("Type /help for commands, /exit to quit")
-	fmt.Fprintln(os.Stderr, helpHint)
+	// Shortcuts bar (Codex-style)
+	shortcutStyle := lipgloss.NewStyle().Foreground(dimGray)
+	keyStyle := lipgloss.NewStyle().Foreground(accentPurple).Bold(true)
+
+	shortcuts := fmt.Sprintf(
+		"%s %s  %s %s  %s %s  %s %s",
+		keyStyle.Render("/help"),
+		shortcutStyle.Render("commands"),
+		keyStyle.Render("/stats"),
+		shortcutStyle.Render("usage"),
+		keyStyle.Render("/clear"),
+		shortcutStyle.Render("reset"),
+		keyStyle.Render("Ctrl+C"),
+		shortcutStyle.Render("exit"),
+	)
+	fmt.Fprintln(os.Stderr, shortcuts)
 	fmt.Fprintln(os.Stderr)
 }
 
@@ -220,21 +236,32 @@ func displayStats(inputTokens, outputTokens int, duration time.Duration) {
 
 	tokenStyle := lipgloss.NewStyle().Foreground(accentBlue).Bold(true)
 	labelStyle := lipgloss.NewStyle().Foreground(dimGray)
+	headerStyle := lipgloss.NewStyle().Foreground(accentPurple).Bold(true)
 
+	// Calculate cost estimate (rough approximation for Gemini)
+	// Gemini 2.5 Flash: ~$0.075/1M input, ~$0.30/1M output
+	inputCost := float64(inputTokens) * 0.000000075
+	outputCost := float64(outputTokens) * 0.00000030
+	totalCost := inputCost + outputCost
+
+	// Format stats
 	stats := fmt.Sprintf(
-		"%s %s   %s %s   %s %s   %s %s",
-		labelStyle.Render("Input:"),
+		"%s\n\n  %s %s tokens\n  %s %s tokens\n  %s %s tokens\n  %s %s\n  %s ~$%.6f",
+		headerStyle.Render("📊 Session Stats"),
+		labelStyle.Render("Input:   "),
 		tokenStyle.Render(fmt.Sprintf("%d", inputTokens)),
-		labelStyle.Render("Output:"),
+		labelStyle.Render("Output:  "),
 		tokenStyle.Render(fmt.Sprintf("%d", outputTokens)),
-		labelStyle.Render("Total:"),
+		labelStyle.Render("Total:   "),
 		tokenStyle.Render(fmt.Sprintf("%d", totalTokens)),
 		labelStyle.Render("Duration:"),
 		tokenStyle.Render(duration.Round(time.Second).String()),
+		labelStyle.Render("Est Cost:"),
+		totalCost,
 	)
 
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, statsBoxStyle.Render("📊 Session Stats\n"+stats))
+	fmt.Fprintln(os.Stderr, statsBoxStyle.Render(stats))
 }
 
 // displayPrompt shows the input prompt
@@ -385,13 +412,37 @@ func runChat(cmd *cobra.Command, args []string) error {
 func showHelp() {
 	helpStyle := lipgloss.NewStyle().Foreground(dimGray)
 	cmdStyle := lipgloss.NewStyle().Foreground(accentPurple).Bold(true)
+	sectionStyle := lipgloss.NewStyle().Foreground(accentBlue).Bold(true)
 
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(accentBlue).Bold(true).Render("Available Commands:"))
-	fmt.Fprintln(os.Stderr, fmt.Sprintf("  %s  %s", cmdStyle.Render("/help, /h    "), helpStyle.Render("Show this help")))
-	fmt.Fprintln(os.Stderr, fmt.Sprintf("  %s  %s", cmdStyle.Render("/exit, /q    "), helpStyle.Render("Exit the chat")))
-	fmt.Fprintln(os.Stderr, fmt.Sprintf("  %s  %s", cmdStyle.Render("/clear       "), helpStyle.Render("Clear conversation history")))
-	fmt.Fprintln(os.Stderr, fmt.Sprintf("  %s  %s", cmdStyle.Render("/stats       "), helpStyle.Render("Show token usage stats")))
+
+	// Commands section
+	fmt.Fprintln(os.Stderr, sectionStyle.Render("📋 Commands"))
+	fmt.Fprintf(os.Stderr, "  %s  %s\n", cmdStyle.Render("/help, /h    "), helpStyle.Render("Show this help"))
+	fmt.Fprintf(os.Stderr, "  %s  %s\n", cmdStyle.Render("/exit, /q    "), helpStyle.Render("Exit and show stats"))
+	fmt.Fprintf(os.Stderr, "  %s  %s\n", cmdStyle.Render("/clear       "), helpStyle.Render("Clear conversation history"))
+	fmt.Fprintf(os.Stderr, "  %s  %s\n", cmdStyle.Render("/stats       "), helpStyle.Render("Show token usage stats"))
+	fmt.Fprintln(os.Stderr)
+
+	// Tools section
+	fmt.Fprintln(os.Stderr, sectionStyle.Render("🔧 Available Tools"))
+	toolStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#F59E0B")).Bold(true)
+	fmt.Fprintf(os.Stderr, "  %s  %s\n", toolStyle.Render("read_file        "), helpStyle.Render("Read file contents"))
+	fmt.Fprintf(os.Stderr, "  %s  %s\n", toolStyle.Render("write_file       "), helpStyle.Render("Write to file (requires confirmation)"))
+	fmt.Fprintf(os.Stderr, "  %s  %s\n", toolStyle.Render("edit_file        "), helpStyle.Render("Edit file (requires confirmation)"))
+	fmt.Fprintf(os.Stderr, "  %s  %s\n", toolStyle.Render("list_directory   "), helpStyle.Render("List directory contents"))
+	fmt.Fprintf(os.Stderr, "  %s  %s\n", toolStyle.Render("glob             "), helpStyle.Render("Find files by pattern"))
+	fmt.Fprintf(os.Stderr, "  %s  %s\n", toolStyle.Render("search_file      "), helpStyle.Render("Search text in files"))
+	fmt.Fprintf(os.Stderr, "  %s  %s\n", toolStyle.Render("web_search       "), helpStyle.Render("Search the web"))
+	fmt.Fprintf(os.Stderr, "  %s  %s\n", toolStyle.Render("web_fetch        "), helpStyle.Render("Fetch web page (requires confirmation)"))
+	fmt.Fprintf(os.Stderr, "  %s  %s\n", toolStyle.Render("shell            "), helpStyle.Render("Run shell command (requires confirmation)"))
+	fmt.Fprintln(os.Stderr)
+
+	// Tips section
+	fmt.Fprintln(os.Stderr, sectionStyle.Render("💡 Tips"))
+	fmt.Fprintf(os.Stderr, "  %s\n", helpStyle.Render("• Use --yolo to skip all confirmations"))
+	fmt.Fprintf(os.Stderr, "  %s\n", helpStyle.Render("• Press Ctrl+C to exit with stats"))
+	fmt.Fprintf(os.Stderr, "  %s\n", helpStyle.Render("• Use -p flag for initial prompt"))
 	fmt.Fprintln(os.Stderr)
 }
 
