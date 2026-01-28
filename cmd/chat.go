@@ -5,8 +5,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"runtime"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -26,7 +29,59 @@ var (
 		input  int
 		output int
 	}
+	sessionStartTime time.Time // Track session start for Ctrl+C stats
 )
+
+// Spinner for loading indicator
+type spinner struct {
+	frames  []string
+	current int
+	mu      sync.Mutex
+	stop    chan struct{}
+	done    chan struct{}
+	message string
+}
+
+func newSpinner(message string) *spinner {
+	return &spinner{
+		frames:  []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
+		message: message,
+		stop:    make(chan struct{}),
+		done:    make(chan struct{}),
+	}
+}
+
+func (s *spinner) Start() {
+	go func() {
+		ticker := time.NewTicker(80 * time.Millisecond)
+		defer ticker.Stop()
+		defer close(s.done)
+
+		spinStyle := lipgloss.NewStyle().Foreground(accentPurple).Bold(true)
+		msgStyle := lipgloss.NewStyle().Foreground(dimGray)
+
+		for {
+			select {
+			case <-s.stop:
+				// Clear the spinner line
+				fmt.Fprint(os.Stderr, "\r\033[K")
+				return
+			case <-ticker.C:
+				s.mu.Lock()
+				frame := s.frames[s.current]
+				s.current = (s.current + 1) % len(s.frames)
+				s.mu.Unlock()
+
+				fmt.Fprintf(os.Stderr, "\r%s %s", spinStyle.Render(frame), msgStyle.Render(s.message))
+			}
+		}
+	}()
+}
+
+func (s *spinner) Stop() {
+	close(s.stop)
+	<-s.done
+}
 
 // DefaultShell returns the default shell for the current OS
 func DefaultShell() string {
@@ -189,6 +244,18 @@ func displayPrompt() {
 
 func runChat(cmd *cobra.Command, args []string) error {
 	startTime := time.Now()
+	sessionStartTime = startTime // Store globally for signal handler
+
+	// Setup signal handler for Ctrl+C
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		fmt.Fprintln(os.Stderr) // New line after ^C
+		displayStats(sessionTokens.input, sessionTokens.output, time.Since(sessionStartTime))
+		os.Exit(0)
+	}()
+	defer signal.Stop(sigChan)
 
 	// Set YOLO mode if requested
 	if yoloMode {
@@ -413,9 +480,14 @@ func processWithToolLoop(
 		// Create a context with timeout for this request
 		reqCtx, cancel := context.WithTimeout(ctx, timeout)
 
+		// Start spinner while waiting for response
+		spin := newSpinner("Thinking...")
+		spin.Start()
+
 		// Stream response with fallback
 		stream, usedModel, err := generateStreamWithFallback(reqCtx, client, req, modelName)
 		if err != nil {
+			spin.Stop()
 			cancel()
 			return err
 		}
@@ -427,8 +499,15 @@ func processWithToolLoop(
 
 		var fullResponse strings.Builder
 		var pendingToolCallParts []*api.Part // Store full Parts with thought_signature for Gemini 3 Pro
+		spinnerStopped := false
 
 		for event := range stream {
+			// Stop spinner on first content
+			if !spinnerStopped {
+				spin.Stop()
+				spinnerStopped = true
+			}
+
 			if event.Type == "error" {
 				cancel()
 				return fmt.Errorf(event.Error)
@@ -462,6 +541,11 @@ func processWithToolLoop(
 			if event.Text != "" {
 				fullResponse.WriteString(event.Text)
 			}
+		}
+
+		// Ensure spinner is stopped
+		if !spinnerStopped {
+			spin.Stop()
 		}
 
 		cancel()
