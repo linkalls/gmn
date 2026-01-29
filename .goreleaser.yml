@@ -46,7 +46,7 @@ brews:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
     homepage: "https://github.com/linkalls/gmn"
-    description: "A lightweight, non-interactive Gemini CLI written in Go"
+    description: "A lightweight Gemini CLI written in Go"
     license: "Apache-2.0"
     test: |
       system "#{bin}/gmn", "--version"

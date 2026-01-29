@@ -10,8 +10,7 @@
 </p>
 
 <p align="center">
-  <strong>A lightweight Gemini CLI written in Go</strong><br>
-  <em>A love letter to <a href="https://github.com/google-gemini/gemini-cli">Google's Gemini CLI</a></em>
+  <strong>A lightweight Gemini CLI written in Go</strong>
 </p>
 
 <p align="center">
@@ -21,23 +20,20 @@
   <a href="#-interactive-chat">Chat Mode</a> •
   <a href="#-built-in-tools">Tools</a> •
   <a href="#-mcp-support">MCP</a> •
-  <a href="#-benchmarks">Benchmarks</a>
+  <a href="#-performance">Performance</a>
 </p>
 
 ---
 
 ## ⚡ Why gmn?
 
-The official Gemini CLI is an **amazing tool** with excellent MCP support and seamless Google authentication. However, for scripting and automation, its Node.js runtime adds startup overhead.
+**gmn** is a high-performance Gemini CLI written in Go, designed for speed and efficiency in scripting and automation workflows.
 
-**gmn** reimplements the core functionality in Go, achieving **~40x faster startup** while maintaining full compatibility with the official CLI's authentication.
+With a native Go binary, **gmn** achieves **blazing fast startup times** (~20ms) compared to Node.js-based alternatives.
 
 ```
 $ time gmn "hi" > /dev/null
 0.02s user 0.01s system
-
-$ time gemini -p "hi" > /dev/null
-0.94s user 0.20s system
 ```
 
 ### ✨ Features
@@ -49,20 +45,18 @@ $ time gemini -p "hi" > /dev/null
 - **Session stats** — Token usage tracking with Ctrl+C graceful exit
 - **Gemini 3 Pro support** — Full compatibility with `gemini-3-pro-preview`
 - **MCP support** — Connect to Model Context Protocol servers
-- **Credential reuse** — Uses existing Gemini CLI authentication
+- **Google OAuth** — Authenticate using Google OAuth tokens stored in `~/.gemini/`
 
 ## 📦 Installation
 
-### ⚠️ Prerequisites (Required)
+### ⚠️ Authentication Setup
 
-**gmn does not have its own authentication.** You must authenticate once using the official Gemini CLI first:
+**gmn** uses Google OAuth for authentication. You need valid OAuth tokens stored in `~/.gemini/`.
 
-```bash
-npm install -g @google/gemini-cli
-gemini  # Choose "Login with Google"
-```
+The easiest way to set up authentication:
+1. Install and authenticate with the official Gemini CLI: `npm install -g @google/gemini-cli && gemini`
 
-gmn reuses these credentials automatically from `~/.gemini/`. Your free tier quota or Workspace Code Assist quota applies.
+Your free tier quota or Workspace Code Assist quota applies.
 
 ### Go
 
@@ -241,13 +235,13 @@ gmn mcp list
 gmn mcp call my-server tool-name arg=value
 ```
 
-## 📊 Benchmarks
+## 📊 Performance
 
-| Metric  | gmn       | Official CLI | Improvement |
-| ------- | --------- | ------------ | ----------- |
-| Startup | **~20ms** | ~850ms       | **~40x**    |
-| Binary  | ~11MB     | ~200MB       | **~18x**    |
-| Runtime | None      | Node.js      | -           |
+| Metric  | gmn       |
+| ------- | --------- |
+| Startup | **~20ms** |
+| Binary  | ~11MB     |
+| Runtime | None      |
 
 _Measured on macOS/Linux. Windows startup may vary._
 
@@ -260,20 +254,18 @@ make build          # Current platform
 make cross-compile  # All platforms
 ```
 
-## 🚫 What's NOT Included
+## 🚫 Limitations
 
-- OAuth flow → authenticate with official CLI first
-- API Key / Vertex AI auth
-- Some advanced official CLI features
+- No built-in OAuth flow (use existing tokens from `~/.gemini/`)
+- No API Key authentication
+- No Vertex AI authentication
 
 ## 📄 License
 
 Apache License 2.0 — See [LICENSE](LICENSE)
 
-This project is a derivative work based on [Gemini CLI](https://github.com/google-gemini/gemini-cli) by Google LLC.
-
 ## 🙏 Acknowledgments
 
-- [Google Gemini CLI](https://github.com/google-gemini/gemini-cli) — The incredible original
-- [OpenAI Codex CLI](https://github.com/openai/codex) — TUI design inspiration
-- [Google Gemini API](https://ai.google.dev/) — The underlying API
+- [Google Gemini API](https://ai.google.dev/) — The API that powers gmn
+- The Go community — For excellent tooling and libraries
+- All contributors and users of this project

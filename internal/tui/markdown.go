@@ -1,5 +1,5 @@
 // Package tui provides a full-featured terminal user interface for gmn.
-// Copyright 2025 Tomohiro Owada
+// Copyright 2025 linkalls
 // SPDX-License-Identifier: Apache-2.0
 package tui
 
