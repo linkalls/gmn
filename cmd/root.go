@@ -55,10 +55,9 @@ var (
 
 var rootCmd = &cobra.Command{
 	Use:   "gmn [prompt]",
-	Short: "A lightweight, non-interactive Gemini CLI",
-	Long: `gmn is a lightweight reimplementation of Google's Gemini CLI
-focused on non-interactive use cases. It reuses authentication from
-the official Gemini CLI (~/.gemini/).
+	Short: "A lightweight Gemini CLI",
+	Long: `gmn is a lightweight Gemini CLI written in Go.
+It uses Google OAuth authentication from ~/.gemini/ for API access.
 
 Examples:
   gmn "Hello, world"
