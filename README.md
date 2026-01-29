@@ -20,7 +20,7 @@
   <a href="#-interactive-chat">Chat Mode</a> •
   <a href="#-built-in-tools">Tools</a> •
   <a href="#-mcp-support">MCP</a> •
-  <a href="#-benchmarks">Benchmarks</a>
+  <a href="#-performance">Performance</a>
 </p>
 
 ---
@@ -256,9 +256,9 @@ make cross-compile  # All platforms
 
 ## 🚫 Limitations
 
-- Built-in OAuth flow (use existing tokens from `~/.gemini/`)
-- API Key authentication
-- Vertex AI authentication
+- No built-in OAuth flow (use existing tokens from `~/.gemini/`)
+- No API Key authentication
+- No Vertex AI authentication
 
 ## 📄 License
 
