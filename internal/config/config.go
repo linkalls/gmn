@@ -1,7 +1,7 @@
 // Package config provides configuration loading for geminimini.
 // This file was modified from the original Gemini CLI.
 // Copyright 2025 Google LLC
-// Copyright 2025 Tomohiro Owada
+// Copyright 2025 linkalls
 // SPDX-License-Identifier: Apache-2.0
 package config
 

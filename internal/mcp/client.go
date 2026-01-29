@@ -1,5 +1,5 @@
 // Package mcp provides MCP (Model Context Protocol) client implementation.
-// Copyright 2025 Tomohiro Owada
+// Copyright 2025 linkalls
 // SPDX-License-Identifier: Apache-2.0
 package mcp
 

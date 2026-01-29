@@ -1,5 +1,5 @@
 // Package confirmation provides TUI-based confirmation prompts for destructive operations.
-// Copyright 2025 Tomohiro Owada
+// Copyright 2025 linkalls
 // SPDX-License-Identifier: Apache-2.0
 package confirmation
 
