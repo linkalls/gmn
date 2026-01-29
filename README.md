@@ -51,11 +51,10 @@ $ time gmn "hi" > /dev/null
 
 ### ⚠️ Authentication Setup
 
-**gmn** uses Google OAuth for authentication. To set up authentication, you need valid OAuth tokens stored in `~/.gemini/`.
+**gmn** uses Google OAuth for authentication. You need valid OAuth tokens stored in `~/.gemini/`.
 
-You can obtain these tokens by:
-1. Using the official Gemini CLI: `npm install -g @google/gemini-cli && gemini`
-2. Or manually setting up OAuth tokens in `~/.gemini/credentials.json`
+The easiest way to set up authentication:
+1. Install and authenticate with the official Gemini CLI: `npm install -g @google/gemini-cli && gemini`
 
 Your free tier quota or Workspace Code Assist quota applies.
 
@@ -267,5 +266,6 @@ Apache License 2.0 — See [LICENSE](LICENSE)
 
 ## 🙏 Acknowledgments
 
-- [Google Gemini API](https://ai.google.dev/) — The underlying API
-- The Go community for excellent tooling and libraries
+- [Google Gemini API](https://ai.google.dev/) — The API that powers gmn
+- The Go community — For excellent tooling and libraries
+- All contributors and users of this project
