@@ -83,7 +83,7 @@ gmn "Explain quantum computing"
 # Interactive chat mode
 gmn chat
 
-# Chat with specific model
+# Chat with specific model (tab completion available)
 gmn chat -m gemini-3-pro-preview
 
 # Chat with initial prompt
@@ -107,6 +107,8 @@ Start an interactive session with a rich TUI and tool execution support:
 gmn chat                              # Default model (gemini-2.5-flash)
 gmn chat -m gemini-3-pro-preview      # Use Gemini 3 Pro
 gmn chat -p "explain this codebase"   # Start with a prompt
+gmn chat -r last                      # Resume the last session
+gmn chat -r my-project                # Resume a named session
 gmn chat --yolo                       # Skip all confirmations (dangerous!)
 gmn chat --shell /bin/zsh             # Use custom shell
 ```
@@ -126,16 +128,25 @@ Type /help for commands, /exit to quit
 - **Rich header** — Model badge, working directory, YOLO indicator
 - **Thinking indicator** — Spinner while waiting for response
 - **Tool notifications** — Visual feedback for tool calls
+- **Session persistence** — Auto-save conversations, resume anytime
 - **Session stats** — Token usage on exit (including Ctrl+C)
+- **Tab completion** — Auto-complete models and commands
+- **Command history** — Navigate with Up/Down arrows
 
 ### Chat Commands
 
-| Command       | Description                |
-| ------------- | -------------------------- |
-| `/help`, `/h` | Show available commands    |
-| `/exit`, `/q` | Exit with session stats    |
-| `/clear`      | Clear conversation history |
-| `/stats`      | Show current token usage   |
+| Command         | Description                                    |
+| --------------- | ---------------------------------------------- |
+| `/help`, `/h`   | Show available commands                        |
+| `/exit`, `/q`   | Exit with session stats                        |
+| `/clear`        | Clear conversation history                     |
+| `/stats`        | Show current token usage                       |
+| `/model`        | Show current model and available models        |
+| `/model <name>` | Switch model (e.g., `/model gemini-2.5-flash`) |
+| `/sessions`     | List all saved sessions                        |
+| `/save [name]`  | Save current session (optional name)           |
+| `/load <id>`    | Load a saved session                           |
+| `Ctrl+C`        | Exit gracefully with session stats             |
 
 ## 🔧 Built-in Tools
 
@@ -192,6 +203,7 @@ Chat Flags:
   -p, --prompt string          Initial prompt to send
   -m, --model string           Model (default based on tier)
   -f, --file strings           Files to include in context
+  -r, --resume string          Resume a session (ID, name, or 'last')
       --yolo                   Skip all confirmation prompts
       --shell string           Custom shell path (default: auto-detect)
 ```

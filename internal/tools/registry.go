@@ -101,11 +101,11 @@ func (r *Registry) GetTools() []api.Tool {
 	}
 }
 
-// Execute runs a tool by name with the given arguments
-func (r *Registry) Execute(name string, args map[string]interface{}) (map[string]interface{}, error) {
-	tool, ok := r.Get(name)
-	if !ok {
-		return map[string]interface{}{"error": "unknown tool: " + name}, nil
+// GetToolNames returns all registered tool names for completion
+func (r *Registry) GetToolNames() []string {
+	result := make([]string, 0, len(r.tools))
+	for name := range r.tools {
+		result = append(result, name)
 	}
-	return tool.Execute(args)
+	return result
 }

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -14,10 +13,13 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/linkalls/gmn/internal/api"
+	"github.com/linkalls/gmn/internal/cli"
 	"github.com/linkalls/gmn/internal/confirmation"
 	"github.com/linkalls/gmn/internal/input"
 	"github.com/linkalls/gmn/internal/output"
+	"github.com/linkalls/gmn/internal/session"
 	"github.com/linkalls/gmn/internal/tools"
+	"github.com/linkalls/gmn/internal/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -25,6 +27,8 @@ var (
 	yoloMode      bool   // Skip all confirmations
 	chatPrompt    string // Initial prompt from -p flag (chat-specific)
 	shellPath     string // Custom shell path
+	resumeSession string // Session ID to resume
+	useTUI        bool   // Use full TUI mode
 	sessionTokens struct {
 		input  int
 		output int
@@ -170,13 +174,19 @@ var (
 func init() {
 	rootCmd.AddCommand(chatCmd)
 
-	chatCmd.Flags().StringVarP(&model, "model", "m", "gemini-2.5-flash", "Model to use")
+	chatCmd.Flags().StringVarP(&model, "model", "m", "", "Model to use (default determined by tier)")
 	chatCmd.Flags().StringVarP(&chatPrompt, "prompt", "p", "", "Initial prompt (alternative to positional args)")
 	chatCmd.Flags().StringArrayVarP(&files, "file", "f", nil, "Files to include in context")
 	chatCmd.Flags().DurationVarP(&timeout, "timeout", "t", 5*time.Minute, "API timeout")
 	chatCmd.Flags().BoolVar(&debug, "debug", false, "Enable debug output")
 	chatCmd.Flags().BoolVar(&yoloMode, "yolo", false, "Skip all confirmation prompts (dangerous!)")
 	chatCmd.Flags().StringVar(&shellPath, "shell", "", "Shell to use for commands (default: auto-detect)")
+	chatCmd.Flags().StringVarP(&resumeSession, "resume", "r", "", "Resume a previous session (ID, name, or 'last')")
+	chatCmd.Flags().BoolVar(&useTUI, "tui", true, "Use full TUI mode (default: true)")
+
+	chatCmd.RegisterFlagCompletionFunc("model", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return AvailableModels, cobra.ShellCompDirectiveNoFileComp
+	})
 }
 
 // displayHeader shows a rich header with model info
@@ -216,9 +226,11 @@ func displayHeader(modelName string, yolo bool) {
 	keyStyle := lipgloss.NewStyle().Foreground(accentPurple).Bold(true)
 
 	shortcuts := fmt.Sprintf(
-		"%s %s  %s %s  %s %s  %s %s",
+		"%s %s  %s %s  %s %s  %s %s  %s %s",
 		keyStyle.Render("/help"),
 		shortcutStyle.Render("commands"),
+		keyStyle.Render("/model"),
+		shortcutStyle.Render("switch"),
 		keyStyle.Render("/stats"),
 		shortcutStyle.Render("usage"),
 		keyStyle.Render("/clear"),
@@ -269,20 +281,73 @@ func displayPrompt() {
 	fmt.Fprint(os.Stderr, promptStyle.Render("❯ "))
 }
 
+// displayConversationHistory shows previous conversation when resuming a session
+func displayConversationHistory(history []api.Content) {
+	if len(history) == 0 {
+		return
+	}
+
+	userStyle := lipgloss.NewStyle().Foreground(accentBlue).Bold(true)
+	modelStyle := lipgloss.NewStyle().Foreground(accentPurple)
+	separatorStyle := lipgloss.NewStyle().Foreground(dimGray)
+
+	fmt.Fprintln(os.Stderr, separatorStyle.Render("─── Previous conversation ───"))
+	fmt.Fprintln(os.Stderr)
+
+	for _, content := range history {
+		// Skip function responses (tool results)
+		hasText := false
+		for _, part := range content.Parts {
+			if part.Text != "" {
+				hasText = true
+				break
+			}
+		}
+		if !hasText {
+			continue
+		}
+
+		if content.Role == "user" {
+			// User message
+			for _, part := range content.Parts {
+				if part.Text != "" {
+					// Truncate long messages
+					text := part.Text
+					lines := strings.Split(text, "\n")
+					if len(lines) > 5 {
+						text = strings.Join(lines[:5], "\n") + "\n..."
+					} else if len(text) > 500 {
+						text = text[:500] + "..."
+					}
+					fmt.Fprintln(os.Stderr, userStyle.Render("❯ ")+text)
+				}
+			}
+		} else if content.Role == "model" {
+			// Model response
+			for _, part := range content.Parts {
+				if part.Text != "" {
+					// Truncate long responses
+					text := part.Text
+					lines := strings.Split(text, "\n")
+					if len(lines) > 10 {
+						text = strings.Join(lines[:10], "\n") + "\n..."
+					} else if len(text) > 1000 {
+						text = text[:1000] + "..."
+					}
+					fmt.Fprintln(os.Stderr, modelStyle.Render(text))
+				}
+			}
+		}
+		fmt.Fprintln(os.Stderr)
+	}
+
+	fmt.Fprintln(os.Stderr, separatorStyle.Render("─── Continue conversation ───"))
+	fmt.Fprintln(os.Stderr)
+}
+
 func runChat(cmd *cobra.Command, args []string) error {
 	startTime := time.Now()
 	sessionStartTime = startTime // Store globally for signal handler
-
-	// Setup signal handler for Ctrl+C
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-sigChan
-		fmt.Fprintln(os.Stderr) // New line after ^C
-		displayStats(sessionTokens.input, sessionTokens.output, time.Since(sessionStartTime))
-		os.Exit(0)
-	}()
-	defer signal.Stop(sigChan)
 
 	// Set YOLO mode if requested
 	if yoloMode {
@@ -314,9 +379,6 @@ func runChat(cmd *cobra.Command, args []string) error {
 	// Apply tier-based default model if user didn't specify
 	effectiveModel := getEffectiveModel(model, userTier, cmd.Flags().Changed("model"))
 
-	// Display rich header
-	displayHeader(effectiveModel, yoloMode)
-
 	// Initialize tool registry with current working directory
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -324,11 +386,105 @@ func runChat(cmd *cobra.Command, args []string) error {
 	}
 	toolRegistry := tools.NewRegistry(cwd)
 
+	// Initialize session manager
+	sessionMgr, err := session.NewManager()
+	if err != nil {
+		// Non-fatal: continue without session management
+		fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(dimGray).Render("⚠ Session management unavailable: "+err.Error()))
+		sessionMgr = nil
+	}
+
+	// Use TUI mode if enabled (default)
+	if useTUI {
+		tuiConfig := tui.Config{
+			Model:           effectiveModel,
+			YoloMode:        yoloMode,
+			Cwd:             cwd,
+			ProjectID:       projectID,
+			Timeout:         timeout,
+			AvailableModels: AvailableModels,
+			InitialPrompt:   initialPrompt,
+			ResumeSession:   resumeSession,
+		}
+		return tui.Run(tuiConfig, apiClient, sessionMgr, toolRegistry)
+	}
+
+	// Legacy REPL mode (--tui=false)
+	return runLegacyREPL(cmd, apiClient, projectID, effectiveModel, initialPrompt, cwd, toolRegistry, sessionMgr, startTime)
+}
+
+// runLegacyREPL runs the legacy liner-based REPL
+func runLegacyREPL(cmd *cobra.Command, apiClient *api.Client, projectID, effectiveModel, initialPrompt, cwd string, toolRegistry *tools.Registry, sessionMgr *session.Manager, startTime time.Time) error {
+	ctx := context.Background()
+
+	// Setup signal handler for Ctrl+C
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		fmt.Fprintln(os.Stderr) // New line after ^C
+		displayStats(sessionTokens.input, sessionTokens.output, time.Since(sessionStartTime))
+		os.Exit(0)
+	}()
+	defer signal.Stop(sigChan)
+
+	// Display rich header
+	displayHeader(effectiveModel, yoloMode)
+
 	// Initialize allow list for session
 	allowList := confirmation.NewAllowList()
 
 	// Prepare history
 	var history []api.Content
+	var currentSession *session.Session
+
+	// Check if resuming a session
+	if resumeSession != "" && sessionMgr != nil {
+		var loadErr error
+		if resumeSession == "last" {
+			currentSession, loadErr = sessionMgr.LoadLatest()
+		} else {
+			currentSession, loadErr = sessionMgr.Load(resumeSession)
+		}
+		if loadErr != nil {
+			fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(lipgloss.Color("#EF4444")).Render("✗ Failed to load session: "+loadErr.Error()))
+		} else {
+			// Restore history from session
+			for _, msg := range currentSession.Messages {
+				var content api.Content
+				if roleStr, ok := msg["role"].(string); ok {
+					content.Role = roleStr
+				}
+				if partsRaw, ok := msg["parts"].([]interface{}); ok {
+					for _, p := range partsRaw {
+						if partMap, ok := p.(map[string]interface{}); ok {
+							if text, ok := partMap["text"].(string); ok {
+								content.Parts = append(content.Parts, api.Part{Text: text})
+							}
+						}
+					}
+				}
+				history = append(history, content)
+			}
+			sessionTokens.input = currentSession.Tokens.Input
+			sessionTokens.output = currentSession.Tokens.Output
+			effectiveModel = currentSession.Model
+			fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(accentGreen).Render("✓ Resumed session: "+currentSession.ID))
+			if currentSession.Name != "" {
+				fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(dimGray).Render("  Name: "+currentSession.Name))
+			}
+			fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(dimGray).Render(fmt.Sprintf("  Messages: %d", len(history))))
+			fmt.Fprintln(os.Stderr)
+
+			// Display conversation history
+			displayConversationHistory(history)
+		}
+	}
+
+	// Create new session if not resuming
+	if currentSession == nil && sessionMgr != nil {
+		currentSession = sessionMgr.NewSession(effectiveModel)
+	}
 
 	// Prepare initial input (files + prompt)
 	inputText, err := input.PrepareInput(initialPrompt, files)
@@ -340,6 +496,28 @@ func runChat(cmd *cobra.Command, args []string) error {
 	formatter, err := output.NewFormatter("text", os.Stdout, os.Stderr)
 	if err != nil {
 		return err
+	}
+
+	// Auto-save function
+	autoSave := func() {
+		if sessionMgr != nil && currentSession != nil {
+			// Convert history to session format
+			currentSession.Messages = make([]map[string]interface{}, len(history))
+			for i, h := range history {
+				parts := make([]map[string]interface{}, len(h.Parts))
+				for j, p := range h.Parts {
+					parts[j] = map[string]interface{}{"text": p.Text}
+				}
+				currentSession.Messages[i] = map[string]interface{}{
+					"role":  h.Role,
+					"parts": parts,
+				}
+			}
+			currentSession.Tokens.Input = sessionTokens.input
+			currentSession.Tokens.Output = sessionTokens.output
+			currentSession.Model = effectiveModel
+			sessionMgr.Save(currentSession)
+		}
 	}
 
 	// If there is initial input, process it first
@@ -355,57 +533,182 @@ func runChat(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			formatter.WriteError(err)
 		}
+		autoSave() // Auto-save after each interaction
 	}
 
 	// Start REPL
-	scanner := bufio.NewScanner(os.Stdin)
-	displayPrompt()
+	replConfig := cli.REPLConfig{
+		Prompt:          "❯ ",
+		AvailableModels: AvailableModels,
+		ToolNames:       toolRegistry.GetToolNames(),
+		OnCommand: func(line string) (handled bool, exit bool) {
+			switch strings.ToLower(strings.TrimSpace(line)) {
+			case "/exit", "/quit", "/q":
+				autoSave() // Save before exit
+				displayStats(sessionTokens.input, sessionTokens.output, time.Since(startTime))
+				return true, true // handled and exit
+			case "/help", "/h":
+				showHelp()
+				return true, false
+			case "/clear":
+				history = nil
+				fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(accentGreen).Render("✓ Conversation cleared"))
+				return true, false
+			case "/stats":
+				displayStats(sessionTokens.input, sessionTokens.output, time.Since(startTime))
+				return true, false
+			case "/sessions":
+				// List all sessions
+				if sessionMgr == nil {
+					fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(lipgloss.Color("#EF4444")).Render("✗ Session management not available"))
+					return true, false
+				}
+				sessions, err := sessionMgr.List()
+				if err != nil {
+					fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(lipgloss.Color("#EF4444")).Render("✗ "+err.Error()))
+					return true, false
+				}
+				if len(sessions) == 0 {
+					fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(dimGray).Render("No saved sessions"))
+					return true, false
+				}
+				fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(accentBlue).Bold(true).Render("📋 Saved Sessions"))
+				for i, s := range sessions {
+					if i >= 10 {
+						fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(dimGray).Render(fmt.Sprintf("  ... and %d more", len(sessions)-10)))
+						break
+					}
+					name := s.ID
+					if s.Name != "" {
+						name = s.Name + " (" + s.ID + ")"
+					}
+					current := ""
+					if currentSession != nil && s.ID == currentSession.ID {
+						current = " ← current"
+					}
+					fmt.Fprintf(os.Stderr, "  %s %s%s\n",
+						lipgloss.NewStyle().Foreground(accentPurple).Render(name),
+						lipgloss.NewStyle().Foreground(dimGray).Render(fmt.Sprintf("[%d msgs, %s]", len(s.Messages), s.UpdatedAt.Format("01/02 15:04"))),
+						lipgloss.NewStyle().Foreground(accentGreen).Render(current))
+				}
+				return true, false
+			default:
+				// Check for /model command
+				if line == "/model" || strings.HasPrefix(strings.ToLower(line), "/model ") {
+					parts := strings.Fields(line)
+					if len(parts) == 1 {
+						// /model without argument - show current model and available models
+						fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(accentPurple).Bold(true).Render("Current model: "+effectiveModel))
+						fmt.Fprintf(os.Stderr, "Available models: %s\n", strings.Join(AvailableModels, ", "))
+						fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(dimGray).Render("Usage: /model <model-name>"))
+					} else if len(parts) == 2 {
+						newModel := parts[1]
+						// Validate model
+						valid := false
+						for _, m := range AvailableModels {
+							if m == newModel {
+								valid = true
+								break
+							}
+						}
+						if valid {
+							effectiveModel = newModel
+							if currentSession != nil {
+								currentSession.Model = effectiveModel
+							}
+							displayHeader(effectiveModel, yoloMode)
+							fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(accentGreen).Render("✓ Model switched to "+newModel))
+						} else {
+							fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(lipgloss.Color("#EF4444")).Render("✗ Invalid model: "+newModel))
+							fmt.Fprintf(os.Stderr, "Available models: %s\n", strings.Join(AvailableModels, ", "))
+						}
+					} else {
+						fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(dimGray).Render("Usage: /model <model-name>"))
+					}
+					return true, false
+				}
 
-	for scanner.Scan() {
-		line := scanner.Text()
+				// Check for /save command
+				if line == "/save" || strings.HasPrefix(strings.ToLower(line), "/save ") {
+					if sessionMgr == nil || currentSession == nil {
+						fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(lipgloss.Color("#EF4444")).Render("✗ Session management not available"))
+						return true, false
+					}
+					parts := strings.Fields(line)
+					if len(parts) == 2 {
+						currentSession.Name = parts[1]
+					}
+					autoSave()
+					msg := "✓ Session saved: " + currentSession.ID
+					if currentSession.Name != "" {
+						msg = "✓ Session saved as: " + currentSession.Name
+					}
+					fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(accentGreen).Render(msg))
+					return true, false
+				}
 
-		// Handle empty lines
-		if strings.TrimSpace(line) == "" {
-			displayPrompt()
-			continue
-		}
+				// Check for /load command
+				if strings.HasPrefix(strings.ToLower(line), "/load ") {
+					if sessionMgr == nil {
+						fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(lipgloss.Color("#EF4444")).Render("✗ Session management not available"))
+						return true, false
+					}
+					parts := strings.Fields(line)
+					if len(parts) != 2 {
+						fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(dimGray).Render("Usage: /load <session-id-or-name>"))
+						return true, false
+					}
+					loadedSession, err := sessionMgr.Load(parts[1])
+					if err != nil {
+						fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(lipgloss.Color("#EF4444")).Render("✗ "+err.Error()))
+						return true, false
+					}
+					// Restore session
+					history = nil
+					for _, msg := range loadedSession.Messages {
+						var content api.Content
+						if roleStr, ok := msg["role"].(string); ok {
+							content.Role = roleStr
+						}
+						if partsRaw, ok := msg["parts"].([]interface{}); ok {
+							for _, p := range partsRaw {
+								if partMap, ok := p.(map[string]interface{}); ok {
+									if text, ok := partMap["text"].(string); ok {
+										content.Parts = append(content.Parts, api.Part{Text: text})
+									}
+								}
+							}
+						}
+						history = append(history, content)
+					}
+					currentSession = loadedSession
+					sessionTokens.input = loadedSession.Tokens.Input
+					sessionTokens.output = loadedSession.Tokens.Output
+					effectiveModel = loadedSession.Model
+					fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(accentGreen).Render("✓ Loaded session: "+loadedSession.ID))
+					fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(dimGray).Render(fmt.Sprintf("  Messages: %d, Model: %s", len(history), effectiveModel)))
+					fmt.Fprintln(os.Stderr)
+					displayConversationHistory(history)
+					return true, false
+				}
 
-		// Handle commands
-		switch strings.ToLower(strings.TrimSpace(line)) {
-		case "/exit", "/quit", "/q":
+				return false, false
+			}
+		},
+		OnInput: func(line string) {
+			err := processWithToolLoop(ctx, apiClient, projectID, effectiveModel, line, &history, formatter, toolRegistry, allowList)
+			if err != nil {
+				formatter.WriteError(err)
+			}
+			autoSave() // Auto-save after each interaction
+		},
+		OnExit: func() {
+			autoSave() // Save on exit
 			displayStats(sessionTokens.input, sessionTokens.output, time.Since(startTime))
-			return nil
-		case "/help", "/h":
-			showHelp()
-			displayPrompt()
-			continue
-		case "/clear":
-			history = nil
-			fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(accentGreen).Render("✓ Conversation cleared"))
-			displayPrompt()
-			continue
-		case "/stats":
-			displayStats(sessionTokens.input, sessionTokens.output, time.Since(startTime))
-			displayPrompt()
-			continue
-		}
-
-		// Process request with tool loop
-		err := processWithToolLoop(ctx, apiClient, projectID, effectiveModel, line, &history, formatter, toolRegistry, allowList)
-		if err != nil {
-			formatter.WriteError(err)
-		}
-
-		displayPrompt()
+		},
 	}
 
-	if err := scanner.Err(); err != nil {
-		return err
-	}
-
-	// Show stats on normal exit
-	displayStats(sessionTokens.input, sessionTokens.output, time.Since(startTime))
-	return nil
+	return cli.StartREPL(replConfig)
 }
 
 // showHelp displays available commands
@@ -422,6 +725,14 @@ func showHelp() {
 	fmt.Fprintf(os.Stderr, "  %s  %s\n", cmdStyle.Render("/exit, /q    "), helpStyle.Render("Exit and show stats"))
 	fmt.Fprintf(os.Stderr, "  %s  %s\n", cmdStyle.Render("/clear       "), helpStyle.Render("Clear conversation history"))
 	fmt.Fprintf(os.Stderr, "  %s  %s\n", cmdStyle.Render("/stats       "), helpStyle.Render("Show token usage stats"))
+	fmt.Fprintf(os.Stderr, "  %s  %s\n", cmdStyle.Render("/model       "), helpStyle.Render("Show/switch model (e.g., /model gemini-2.5-flash)"))
+	fmt.Fprintln(os.Stderr)
+
+	// Sessions section
+	fmt.Fprintln(os.Stderr, sectionStyle.Render("💾 Sessions"))
+	fmt.Fprintf(os.Stderr, "  %s  %s\n", cmdStyle.Render("/sessions    "), helpStyle.Render("List saved sessions"))
+	fmt.Fprintf(os.Stderr, "  %s  %s\n", cmdStyle.Render("/save [name] "), helpStyle.Render("Save current session (optional name)"))
+	fmt.Fprintf(os.Stderr, "  %s  %s\n", cmdStyle.Render("/load <id>   "), helpStyle.Render("Load a saved session"))
 	fmt.Fprintln(os.Stderr)
 
 	// Tools section
@@ -440,6 +751,8 @@ func showHelp() {
 
 	// Tips section
 	fmt.Fprintln(os.Stderr, sectionStyle.Render("💡 Tips"))
+	fmt.Fprintf(os.Stderr, "  %s\n", helpStyle.Render("• Sessions auto-save after each message"))
+	fmt.Fprintf(os.Stderr, "  %s\n", helpStyle.Render("• Resume with: gmn chat -r last"))
 	fmt.Fprintf(os.Stderr, "  %s\n", helpStyle.Render("• Use --yolo to skip all confirmations"))
 	fmt.Fprintf(os.Stderr, "  %s\n", helpStyle.Render("• Press Ctrl+C to exit with stats"))
 	fmt.Fprintf(os.Stderr, "  %s\n", helpStyle.Render("• Use -p flag for initial prompt"))

@@ -23,9 +23,17 @@ import (
 // Model constants for tier-based defaults and fallback
 const (
 	// Default models based on tier
-	ModelStandardDefault = "gemini-3-pro-preview"     // For standard-tier (Pro subscription)
-	ModelFreeDefault     = "gemini-2.5-flash" // For free-tier
+	ModelStandardDefault = "gemini-3-pro-preview" // For standard-tier (Pro subscription)
+	ModelFreeDefault     = "gemini-2.5-flash"     // For free-tier
 )
+
+// AvailableModels defines all supported models for completion
+var AvailableModels = []string{
+	"gemini-3-pro-preview",
+	"gemini-3-flash-preview",
+	"gemini-2.5-flash",
+	"gemini-2.5-pro",
+}
 
 // FallbackModels defines the fallback order when a model fails
 var FallbackModels = []string{
@@ -64,11 +72,15 @@ Examples:
 
 func init() {
 	rootCmd.Flags().StringVarP(&prompt, "prompt", "p", "", "Prompt to send to Gemini (required)")
-	rootCmd.Flags().StringVarP(&model, "model", "m", "gemini-2.5-flash", "Model to use")
+	rootCmd.Flags().StringVarP(&model, "model", "m", "", "Model to use (default determined by tier)")
 	rootCmd.Flags().StringVarP(&outputFormat, "output-format", "o", "text", "Output format: text, json, stream-json")
 	rootCmd.Flags().StringArrayVarP(&files, "file", "f", nil, "Files to include in context")
 	rootCmd.Flags().DurationVarP(&timeout, "timeout", "t", 5*time.Minute, "API timeout")
 	rootCmd.Flags().BoolVar(&debug, "debug", false, "Enable debug output")
+
+	rootCmd.RegisterFlagCompletionFunc("model", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return AvailableModels, cobra.ShellCompDirectiveNoFileComp
+	})
 
 }
 
